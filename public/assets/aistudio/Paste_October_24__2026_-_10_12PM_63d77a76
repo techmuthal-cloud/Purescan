@@ -1,0 +1,435 @@
+Production Implementation Specification for an AI Coding Agent
+Product: ScanSafe, a multi-category product scanning and product intelligence app
+Input methods: Barcode and product-label photo
+Primary capabilities: Evidence-based assessment, personalized alerts, product comparison, grounded AI explanations
+Preferred direction: Reuse the current project architecture; evaluate Convex, Clerk and Cloudflare R2 compatibility before implementation.
+0. Instructions to the coding agent
+You are the senior engineer responsible for making the existing ScanSafe application genuinely intelligent, reliable, secure and production-oriented—not merely adding an AI chat screen.
+Mandatory operating rules
+1. Inspect before editing. Audit repository structure, UI, dependencies, backend functions, database schema, environment configuration, tests, build commands and existing design system.
+2. Preserve working behavior. Do not rewrite the project or replace architecture without a concrete reason.
+3. Report reality. Distinguish implemented features from mocks, TODOs and unavailable integrations. Never claim a feature works until tested.
+4. Plan first. Report findings, risks, architecture decisions, likely files to change and a phased plan before major changes.
+5. Keep secrets server-side. Never place provider API keys, database admin credentials, signing secrets or unrestricted storage credentials in Android code.
+6. No fake intelligence. Do not use hardcoded production results, fabricated sources, invented product matches, or random safety scores.
+7. Evidence before explanation. Versioned rules and retrieved evidence determine findings. AI explains validated findings; it must not invent a verdict.
+8. Expose uncertainty. Unknown products, ambiguous barcodes, poor OCR, unresolved ingredients, conflicting sources and unsupported categories must produce explicit states.
+9. Test changes. Run available lint, unit, integration and build checks; report exact commands and results.
+10. Respect the existing stack. Verify whether the project is native Kotlin, React Native or web. Do not assume. Verify current SDK compatibility before choosing integrations.
+11. Do not silently expand scope. Record open questions and use safe defaults when possible.
+12. Use current official documentation for SDK APIs, authentication, data-source terms and platform requirements.
+First response required from the agent
+Before modifying files, report:
+- Repository and stack summary.
+- Implemented features versus mocks/placeholders.
+- Current scan flow and hardcoded or missing data paths.
+- Backend, auth and storage integrations.
+- Security and reliability gaps.
+- Proposed architecture that fits the actual repository.
+- Phased implementation plan and likely files/modules affected.
+- Critical blockers.
+Then begin Phase 1 unless a real blocker or destructive migration requires approval.
+1. Product objective
+ScanSafe helps users understand products by scanning a barcode or photographing a label. It resolves product and formulation identity, extracts and normalizes label data, retrieves category-appropriate evidence, applies transparent assessment rules and generates understandable, traceable results.
+
+The long-term scope includes food, cosmetics/personal care, household cleaning products and other consumer categories. Do not pretend every category is supported on day one. Unsupported categories must return unsupported_category or insufficient_information, not an invented verdict.
+Core capabilities
+1. Barcode-based product lookup.
+2. Photo capture, crop/perspective correction and OCR.
+3. Editable extraction with uncertainty indicators.
+4. Product/variant/market resolution.
+5. Canonical ingredient normalization and alias matching.
+6. Evidence retrieval with source provenance and jurisdiction.
+7. Versioned deterministic assessment rules.
+8. Grounded AI explanations and follow-up questions.
+9. Personalized alerts based only on user-provided preferences.
+10. Product comparison with data coverage and limitations.
+11. Alternatives retrieved from real product records.
+12. Scan history, feedback, reproducible assessments and auditability.
+Non-goals for the first production increment
+- Diagnosing or treating medical conditions.
+- Guaranteeing a product is safe.
+- One universal toxicity score across unrelated categories.
+- Legal conclusions without applicable jurisdiction-specific rules.
+- Treating community submissions or AI output as verified facts.
+- Building every category adapter before the core pipeline works.
+2. Engineering principles
+- Canonical records: Products, variants, identifiers, label snapshots, ingredients, sources, evidence and assessments are separate entities.
+- Immutable observations: A scanned label is a time-stamped snapshot. New formulation data must not silently rewrite past assessments.
+- Separate confidence dimensions: Product identity, OCR, ingredient match and evidence coverage are distinct. Never merge them into a fabricated safety probability.
+- Traceability: Every material finding links to supporting evidence and/or a rule.
+- Jurisdiction-aware rules: Each rule identifies market, category, conditions, source, effective dates and version.
+- Graceful degradation: Source outage must not become a positive or negative verdict.
+- Human correction: Corrections are auditable and do not automatically become trusted global facts.
+- Least privilege: User-owned records are authorized server-side; never trust a client-supplied user ID.
+- Privacy by design: Keep images private, minimize retention and avoid unnecessary sensitive data.
+- Reproducibility: Store rule/evidence versions and input snapshot references.
+3. Target architecture
+Adapt this to the actual repository; do not force a rewrite.
+Android client
+Responsibilities: camera/barcode capture, crop/rotate, OCR review, scan-job creation, progress display, results/citations/limitations, preferences and comparisons. The client must not determine the trusted assessment entirely on-device or store provider secrets.
+
+If the existing app is native Android, Kotlin, Jetpack Compose, CameraX and ML Kit are reasonable candidates. Use ML Kit Barcode Scanning for a custom scanner and evaluate ML Kit Text Recognition for OCR. Confirm dependency compatibility with the current project.
+
+Reference: https://developers.google.com/ml-kit/vision/barcode-scanning/android
+Backend
+Preferred direction if compatible:
+- Convex for operational records, queries, mutations and backend functions.
+- Clerk for authentication only after verifying compatibility with the actual client.
+- Private Cloudflare R2 for persistent images where needed.
+- An asynchronous worker/queue for long-running OCR, ingestion or AI work when required by workload/runtime limits.
+- Provider adapters for catalogs, OCR, evidence and language models.
+Do not assume a React/Next.js Clerk–Convex integration works unchanged in native Kotlin. Verify supported SDKs and token verification first. Propose the smallest compatible adaptation if needed.
+Logical pipeline
+Capture → Validate → Decode/OCR → Resolve product → Normalize label → Retrieve evidence → Apply rules → Generate explanation → Validate output → Persist result → Display
+
+Every stage needs typed inputs/outputs, an observable state, bounded retries and a safe failure code.
+Provider interfaces
+Define abstractions as appropriate to the current code:
+- BarcodeDecoder
+- OcrProvider
+- ProductCatalogProvider
+- IngredientKnowledgeProvider
+- EvidenceSourceAdapter
+- AssessmentRuleProvider
+- LanguageModelProvider
+- ImageStorageProvider
+Provider responses must include provenance and timestamps. An API response is not automatically trustworthy.
+4. Scan-job state machine
+Suggested states:
+queued, validating_input, decoding_barcode, extracting_text, resolving_product, normalizing_ingredients, retrieving_evidence, assessing, generating_explanation, validating_result, needs_review, completed, partial, failed, cancelled, expired.
+
+needs_review can occur after product matching or OCR. partial means some useful data exists but one or more steps were incomplete. Source failure must not be shown as “no concern found.”
+
+Every job stores status/stage, timestamps, attempt count, safe error code, retryability, idempotency key, owner, input snapshot references and correlation ID. Retry transient failures with bounded exponential backoff and jitter. Do not endlessly retry invalid input or authorization errors.
+5. Barcode and photo flows
+Barcode path
+1. Decode locally where practical.
+2. Preserve barcode values as strings, including leading zeros.
+3. Validate format and identifier scheme.
+4. Query cache and approved product-catalog adapters.
+5. Return candidates with match reasons and source timestamps.
+6. Compare brand, product name, variant, size, market and label evidence.
+7. If ambiguous or conflicting with the physical package, request label confirmation.
+8. Never treat a barcode as proof of formulation or authenticity.
+Photo path
+1. Validate file type, size and dimensions.
+2. Check blur, glare, framing and readability.
+3. Correct orientation/crop/perspective where available.
+4. Run OCR and preserve confidence/bounding boxes when available.
+5. Parse ingredient lists, nested groups, allergen statements, nutrition panels, warnings and locale where supported.
+6. Normalize spelling/spacing while retaining original text.
+7. Match aliases to canonical records.
+8. Ask the user to correct consequential or low-confidence text.
+9. Save an immutable label snapshot.
+Do not drop unknown ingredients or interpret missing text as absence.
+Identity status
+Use interpretable status values such as exact, candidate, ambiguous, not_found, conflict. If using a numeric matching score, document and evaluate it; do not call an uncalibrated heuristic a probability.
+6. Logical database model
+Map these entities to current database conventions. Reuse existing equivalent tables if they are well designed; do not duplicate tables unnecessarily.
+Entity	Key fields
+products	canonicalName, brand, categoryId, manufacturer, countryCodes, status, timestamps
+productIdentifiers	product/variant ID, scheme, value as string, market, sourceId, verifiedAt, verificationStatus
+productVariants	productId, variantName, size/unit, market, packagingVersion, formulationVersion, active dates
+labelSnapshots	product/variant, imageHash/storageKey, raw OCR, normalized text, locale/market, capturedAt, sourceType, OCR provider/version, reviewStatus, retentionState
+productIngredients	labelSnapshotId, ingredientId nullable, rawText, normalizedText, orderIndex, groupPath, OCR/match confidence, matchStatus, userConfirmed
+ingredients	canonicalName, aliases, externalIdentifiers, supportedCategories, functions, description, recordStatus
+evidenceSources	name, publisher, sourceType, jurisdictions, supportedCategories, terms/license, reliability policy, last sync, status
+evidenceRecords	ingredient/product/rule reference, sourceId, claimType/text, source URL/ID, published/retrieved/effective dates, evidenceGrade, jurisdiction, category, context, contentHash, reviewStatus
+regulatoryRules	version, jurisdiction, category, target ingredient/product, ruleType, conditions, outcome, source IDs, effective dates, review status
+assessments	product, labelSnapshot, scanJob, status, overallFinding, identity confidence, extraction/evidence coverage, rules/evidence versions, model/prompt version, limitations, assessedAt
+assessmentFindings	assessmentId, ingredient nullable, findingType, supported severity, rationale/context, evidence IDs, rule IDs, limitations
+scanJobs	userId, status, stage, attemptCount, errorCode, idempotencyKey, correlationId, timestamps
+userPreferences	userId, avoidList, optional sensitivities/dietary preferences, locale, jurisdictions, updatedAt
+productComparisons	userId, productIds, comparison version, data coverage, createdAt
+feedbackReports	userId, assessmentId, feedbackType, details, reviewStatus, createdAt
+auditEvents	actor, action, resource, timestamp, metadata excluding secrets/unneeded personal data
+
+
+Schema requirements:
+- Preserve barcode leading zeros.
+- Model conflicting identifier claims rather than silently overwriting.
+- Label snapshots are immutable; corrections create a revision/correction record.
+- Unknown ingredient matches remain explicit.
+- Store source attribution and applicable license metadata.
+- Version rules and evidence so old assessments can be explained.
+- Index for barcode resolution, product/variant lookup, scans by user/time, findings by assessment, evidence by ingredient/category/jurisdiction.
+- Use paginated queries and bounded document sizes.
+- Confirm exact index syntax against the installed Convex version.
+7. Evidence ingestion and sources
+Every source adapter documents:
+- Claims it can support.
+- Category and jurisdiction.
+- API terms/licensing/attribution.
+- Authentication, rate limits and refresh cadence.
+- Parsing/schema validation.
+- Deduplication/content hashing.
+- Error handling and source health.
+- Human review requirements for consequential rules.
+Candidate sources to evaluate (not blanket endorsements or complete safety databases):
+- Open Food Facts: https://openfoodfacts.github.io/documentation/docs/Product-Opener/api/
+- USDA FoodData Central: https://fdc.nal.usda.gov/api-guide/
+- FDA food ingredient/additive resources: https://www.fda.gov/food/food-ingredients-packaging/food-additives-petitions
+- European Commission CosIng: https://single-market-economy.ec.europa.eu/sectors/cosmetics/cosmetic-ingredient-database_en
+- FDA cosmetic labeling guidance: https://www.fda.gov/cosmetics/cosmetics-labeling-regulations/summary-cosmetics-labeling-requirements
+- US EPA Safer Choice standard: https://www.epa.gov/saferchoice/standard
+- US EPA Safer Choice product directory: https://www.epa.gov/saferchoice/products
+For India-specific legal claims, add relevant Indian regulatory sources for each category. Do not infer Indian legal status from US/EU sources alone.
+
+Data policy:
+- Keep source identity, timestamps, license and provenance.
+- Community data is unverified until reviewed.
+- Prefer current official sources for legal claims.
+- Preserve conflicts and show them.
+- Missing data is not negative evidence.
+- A barcode lookup does not prove authenticity.
+- Show source coverage and freshness to the assessment engine/UI.
+- Do not scrape or bulk-import without reviewing terms and permitted use.
+8. Deterministic assessment engine
+Assessment must be a versioned, testable domain service. The AI model is not the source of the safety verdict.
+Sequence
+1. Validate category, market, input and identity.
+2. Check whether a reviewed rule set supports this category.
+3. Resolve ingredients while retaining unknowns/ambiguities.
+4. Retrieve applicable evidence/rules.
+5. Check jurisdiction, effective dates, use conditions and freshness.
+6. Evaluate explicit rules.
+7. Calculate defined extraction/evidence coverage.
+8. Produce findings with traceable rule/evidence IDs.
+9. Determine result status and limitations.
+10. Generate explanation from the structured assessment.
+11. Validate and persist all versions.
+Result vocabulary
+assessmentStatus: complete, partial, needs_review, failed, unsupported_category.
+
+overallFinding: no_major_concern_identified, concerns_found, insufficient_information.
+
+Controlled findingType examples:
+- regulatory_restriction
+- known_hazard
+- potential_concern
+- allergen_match
+- user_preference_conflict
+- nutrition_observation
+- data_quality_issue
+- unknown_ingredient
+Use severity only when a documented category policy supports it. Do not use one universal toxicity score for food, cosmetics, cleaners, electronics and unrelated categories.
+
+Keep these separate:
+- Identity confidence.
+- Extraction coverage.
+- Ingredient-match confidence.
+- Evidence coverage.
+- Assessment outcome.
+“No major concern identified” is not a safety guarantee. “Insufficient information” is not equivalent to unsafe. An unavailable source is not evidence that no concern exists.
+
+Example rule shape (illustrative only):
+{
+  "ruleId": "allergen-match-v1",
+  "category": "food",
+  "ruleType": "user_preference_conflict",
+  "condition": "ingredient_match_to_user_avoid_list",
+  "outcome": "personalized_alert",
+  "requires": ["resolved_ingredient", "explicit_user_preference"],
+  "sourceRequired": true
+}
+9. Grounded AI workflow
+Use AI for explanation, controlled Q&A and comparisons—not as the primary evidence database or assessment authority.
+1. Retrieve approved evidence relevant to category, market, effective date and context.
+2. Pass the model the structured assessment, evidence snippets and stable evidence IDs.
+3. Require explanations to stay within the supplied evidence.
+4. Require schema-constrained output.
+5. Validate every cited ID against the retrieved set.
+6. Verify AI does not change the deterministic outcome.
+7. If validation fails, retry once with a constrained repair prompt or return the deterministic result without generated prose.
+Example output contract:
+{
+  "summary": "Plain-language explanation of the assessment.",
+  "overallFinding": "insufficient_information",
+  "findings": [
+    {
+      "ingredientId": "canonical-ingredient-id",
+      "findingType": "potential_concern",
+      "explanation": "Contextual explanation supported by retrieved evidence.",
+      "evidenceRecordIds": ["evidence-record-id"],
+      "limitations": ["Relevant concentration was not available."]
+    }
+  ],
+  "personalizedSuggestions": [],
+  "limitations": ["The full formulation has not been independently verified."]
+}
+This is a schema example, not a real product assessment. Enforce the schema using the project's supported validators.
+Prompt-injection defense
+Labels, OCR output, websites, product descriptions and user submissions are untrusted data, not instructions. Do not let them override system policies or assessment rules. Restrict model tools to approved retrieval, keep secrets out of prompts, validate tool arguments/output, limit tokens/time/cost, reject unknown evidence IDs, and never let the model create or approve regulatory rules.
+Product questions
+Answer against the selected product and cited evidence. If information is missing, say so and ask a targeted question. Do not diagnose, prescribe treatment or claim certainty about individual reactions.
+10. Personalization, comparisons and alternatives
+Personalization
+- Only use explicit user-provided preferences.
+- Keep sensitive preferences optional, private, editable and deletable.
+- Explain each preference match.
+- Do not infer allergies, diagnoses or health status from scan history.
+Comparisons
+Compare only relevant shared fields: identity/variant/market, ingredient coverage, evidence-backed findings, nutrition when comparable, declared allergens/fragrance where applicable, and price/size only when current and reliable.
+
+Show missing data and source-age differences. Never rank products using an arbitrary AI score. If data is not comparable, explain why.
+Alternatives
+Retrieve alternatives from real product records. Verify market and relevant attributes where possible. Explain why each alternative is suggested and show data coverage. Never invent product names, prices, availability or certifications.
+11. API/backend operations
+Implement using the project's current conventions; these are logical operations, not a mandate to add a REST server if Convex functions already fit.
+- createScan(input) — validate and create an idempotent scan job.
+- getScan(scanId) — authorized status/progress.
+- resolveBarcode(code, market) — candidates and match reasons.
+- createImageUpload(scanId, metadata) — controlled private upload flow.
+- confirmProduct(scanId, productOrVariantId) — persist user confirmation.
+- confirmIngredients(scanId, corrections) — persist reviewed corrections.
+- getProduct(productId) — canonical product/variant.
+- getIngredient(ingredientId) — facts and evidence references.
+- getAssessment(assessmentId) — versioned assessment.
+- compareProducts(productIds) — evidence-grounded comparison.
+- askProductQuestion(assessmentId, question) — grounded Q&A.
+- updatePreferences(preferences) — authorized user-only mutation.
+- listUserScans(cursor, limit) — paginated history.
+- submitFeedback(assessmentId, feedback) — review queue.
+- getSourceMetadata(sourceId) — provenance/freshness.
+Long-running scans should return a job ID and use polling/subscriptions rather than keeping the initial request open.
+
+Every operation needs validation, authorization, bounded work, predictable error codes and tests. Never trust client-supplied owner IDs.
+12. Security, privacy and operations
+Mandatory:
+- Server-side authorization on every user-owned read/write.
+- Authentication/token verification compatible with actual app architecture.
+- Private R2 bucket, short-lived signed URLs, least-privilege credentials.
+- Upload size/type limits and safe image processing.
+- No provider secrets in the mobile client.
+- Per-user quotas/rate limits and abuse controls.
+- Redact tokens, signed URLs and unnecessary personal data from logs.
+- Document and test retention/deletion.
+- Audit rule/source changes.
+- Backups and tested recovery.
+- Dependency and secret scanning in CI.
+- Prompt-injection defenses.
+- Consent and clear policy for image retention and sensitive preferences.
+Track:
+- Scan success/failure by stage.
+- Barcode match/ambiguity rate.
+- OCR and ingredient extraction quality.
+- Ingredient match precision and unknown rate.
+- Evidence coverage and stale-source rate.
+- Partial/needs-review rate.
+- AI schema/citation failures and unsupported claims.
+- p50/p95/p99 stage latency, queue age and retries.
+- Cost per successful scan.
+- User correction/feedback trends.
+Use correlation IDs across stages. Do not log raw label text, private image URLs, tokens or sensitive preferences by default. Use timeouts, concurrency limits, safe caching, provider-outage handling and cost caps.
+13. Test plan
+Unit tests
+- Barcode validation and leading zeros.
+- Product/variant match and conflicts.
+- OCR normalization and ingredient parsing.
+- Alias and unknown ingredient handling.
+- Rule evaluation, effective dates and jurisdiction.
+- Evidence ID validation.
+- Job transitions.
+- Preference matching.
+- Comparison with missing data.
+Integration tests
+- Barcode → catalog candidate → assessment.
+- Photo → OCR → ingredient review → assessment.
+- Provider timeout/recovery.
+- Duplicate/idempotent job creation.
+- Cross-user authorization denial.
+- Signed upload expiry and image deletion.
+- Evidence attribution and freshness.
+- AI output validation/fallback.
+- Reproducibility by rule/evidence version.
+Human-reviewed evaluation dataset
+Include multiple categories/markets, poor-quality labels, glare/blur/rotation, supported languages, aliases, similarly named ingredients, unknown ingredients, incomplete labels, conflicting product records, and positive/negative/insufficient-evidence cases.
+
+Measure OCR/ingredient precision and recall, false ingredient matches, citation validity, unsupported claims and result consistency. Set release thresholds after establishing a representative baseline. Do not tune and evaluate on the same cases only.
+Security/load tests
+Test cross-account access, forged IDs, prompt injection, malicious/oversized images, upload abuse, rate-limit bypass, secret leakage, bursts, provider throttling, worker termination/retries, queue backlogs, database/index bottlenecks and backup restoration.
+
+Do not claim a concurrency target until it has been tested on the deployed configuration.
+14. Implementation phases and definition of done
+Phase 0 — Repository audit
+Deliver architecture map, mock/real feature inventory, dependency/integration audit, security gaps and incremental plan.
+Done when: plan fits the real repository and avoids unnecessary rewrites.
+Phase 1 — Reliable scan foundation
+Implement job state machine, barcode capture/validation, product candidates, photo/OCR, editable text, unknown/ambiguous/error states, persistence and authorized history.
+Done when: barcode and photo paths work end-to-end with real integrations or clearly labeled test fixtures; automated tests pass; no hardcoded production verdicts.
+Phase 2 — Canonical data and evidence
+Implement product/variant/identifier records, ingredient aliases, source registry/adapters, provenance/freshness, initial reviewed rules, conflict/missing-data behavior.
+Done when: every material finding is traceable and missing evidence is not treated as negative evidence.
+Phase 3 — Deterministic assessment
+Implement versioned rules, category/jurisdiction context, coverage metrics, structured findings, reproducibility and regression fixtures.
+Done when: same input snapshot plus same rule/evidence versions yields reproducible structured findings.
+Phase 4 — Grounded AI
+Implement server-side model abstraction, evidence retrieval, structured output, citation validation, prompt-injection defense and deterministic fallback.
+Done when: AI cannot change the deterministic outcome or introduce unvalidated source IDs.
+Phase 5 — Personalization and comparisons
+Implement explicit preferences, alert matching, comparisons, real alternative retrieval, missing-data explanations and deletion/privacy tests.
+Done when: recommendations are reproducible, grounded and do not infer health conditions.
+Phase 6 — Production hardening
+Implement quotas/idempotency, monitoring/alerts, backup restore, load/security tests, retention/deletion, rollout controls and regression evaluation.
+Done when: release gates are met and failures can be detected, investigated and recovered from.
+15. UI states
+Preserve the existing ScanSafe design system if implemented: charcoal/black, warm cream and orange, readable typography, high contrast and outdoor legibility.
+
+Provide actual UI states:
+- queued: “Preparing scan…”
+- extracting_text: stage progress and capture guidance.
+- needs_review: uncertain text with edit controls.
+- resolving_product: show candidates only when available.
+- retrieving_evidence: explain evidence lookup.
+- assessing: explain rule-based evaluation.
+- partial: show known findings and what could not be verified.
+- unsupported_category: explain that a reliable assessment is not available for this category.
+- failed: actionable retry/recapture guidance.
+- completed: findings, sources, limitations, timestamp and version.
+Do not show a fake percentage. Use stage-based progress unless the backend reports a meaningful measured percentage. Do not rely on color alone; use text labels and icons.
+16. Release checklist
+- [ ] Existing repository audited before changes.
+- [ ] No production path returns fabricated product findings.
+- [ ] Barcode and photo paths share the canonical pipeline.
+- [ ] Barcode strings preserve leading zeros.
+- [ ] Variants and immutable label snapshots are represented.
+- [ ] Unknown/ambiguous ingredients are visible.
+- [ ] Material findings have evidence/rule provenance.
+- [ ] Unsupported categories and source outages fail safely.
+- [ ] AI output is schema-validated and evidence IDs checked.
+- [ ] AI cannot change deterministic outcomes.
+- [ ] Authentication and per-user authorization are tested.
+- [ ] Secrets are server-side.
+- [ ] Image retention/deletion is implemented.
+- [ ] Unit, integration, regression and security tests run.
+- [ ] Build/lint results are reported truthfully.
+- [ ] Metrics, logs and alerts are configured.
+- [ ] Backup and restore are tested.
+- [ ] Documentation and environment setup are updated.
+17. Required final report from the coding agent
+At the end, report:
+1. Features actually implemented.
+2. Architecture and data flow.
+3. Files created/changed and why.
+4. Schema changes and migration/backfill steps.
+5. Integrations and required environment variable names (never values).
+6. Security/privacy changes.
+7. Tests executed with exact commands/results.
+8. Build/lint status.
+9. Known limitations, unsupported categories and mock-only paths.
+10. Deployment steps.
+11. Remaining blockers and next phase.
+Do not call the app “production-ready” just because it compiles. Identify unverified release requirements.
+18. Official references to review before coding
+- ML Kit Barcode Scanning: https://developers.google.com/ml-kit/vision/barcode-scanning/android
+- Open Food Facts API: https://openfoodfacts.github.io/documentation/docs/Product-Opener/api/
+- USDA FoodData Central: https://fdc.nal.usda.gov/api-guide/
+- FDA food ingredients/additives: https://www.fda.gov/food/food-ingredients-packaging/food-additives-petitions
+- European Commission CosIng: https://single-market-economy.ec.europa.eu/sectors/cosmetics/cosmetic-ingredient-database_en
+- FDA cosmetic labeling: https://www.fda.gov/cosmetics/cosmetics-labeling-regulations/summary-cosmetics-labeling-requirements
+- EPA Safer Choice standard: https://www.epa.gov/saferchoice/standard
+- EPA Safer Choice product directory: https://www.epa.gov/saferchoice/products
+These sources have different scopes, jurisdictions, licenses and update practices. Evaluate them before production ingestion. Add suitable Indian regulatory sources for each supported category before making India-specific legal claims.
+19. Start instruction
+Begin by auditing the existing repository. Do not immediately generate a new app or rewrite working code. Return the audit and phased plan first. Then implement Phase 1 using the current architecture, add tests, run available checks and report results. Continue phase-by-phase, keeping the app runnable and never substituting mock intelligence for real, traceable behavior.

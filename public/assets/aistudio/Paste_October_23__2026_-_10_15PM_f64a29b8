@@ -1,0 +1,539 @@
+Add real features and add real camera access and this app must handle the 10000 user at time, when all user start using this app at time . ScanSafe.AI — Prototype-to-Production Conversion Plan
+Purpose: Convert the existing ScanSafe.AI prototype into a secure, reliable, scalable Android product and backend.
+Capacity objective: Verify support for 10,000+ concurrent users under defined workloads.
+Status: Engineering requirements to implement and test—not a claim that these requirements are already met.
+1. Mission and non-negotiable rules
+Inspect the actual repository before rewriting anything. Preserve working features and the approved visual design. Replace demo-only behavior with real implementations, close security gaps, add automated tests, and demonstrate capacity using repeatable load tests.
+- Do not claim zero downtime, perfect security, or 10,000-user capacity without evidence.
+- Do not leave mock data, hard-coded reports, fake authentication, or dummy billing in production paths.
+- Never embed backend/database/AI secrets in the Android APK or commit secrets to source control.
+- Treat OCR, model output, external APIs, and user-provided label text as untrusted input.
+- Do not turn a timeout, missing match, or unavailable evidence source into a “safe” or “unsafe” conclusion.
+- Implement incrementally with tests, reviewable changes, monitoring, and rollback plans.
+- If credentials, provider access, source data, or decisions are missing, document the blocker instead of pretending it is resolved.
+2. Phase 0 — Audit the prototype first
+Create PRODUCTION_AUDIT.md before major code changes.
+
+Inspect:
+- Android source, Gradle files, dependencies, manifest, navigation, permissions and build variants.
+- Backend endpoints, background jobs, environment variables and deployment configuration.
+- Database schema, migrations, indexes, seed/demo data and access controls.
+- Authentication, authorization, session lifecycle and account deletion.
+- Image capture/upload, OCR, parsing, ingredient matching, evidence retrieval and reports.
+- AI providers, prompts, schemas, quotas, error handling and spend limits.
+- Subscriptions, purchase verification, quotas and restore-purchase flow.
+- Tests, CI/CD, monitoring, logs, backups, infrastructure and third-party licenses.
+Classify each feature as:
+- Implemented and tested
+- Implemented but unverified
+- Partially implemented
+- Mock/demo only
+- Missing
+- Blocked by external configuration
+For each issue, record severity, affected module, failure/security scenario, remediation, test and owner. Prioritize critical security/privacy issues, data loss, unauthorized access, unsupported ingredient findings, crashes, scalability, cost and UX.
+
+Gate: Do not assume the prototype's stack or gaps. Base the implementation plan on repository evidence.
+3. Target architecture
+Use this as a target pattern, not an instruction to rewrite a working system without reason.
+```mermaid
+flowchart TD
+ A[Android App] --> B[CDN / WAF / API Gateway]
+ B --> C[Stateless API Instances]
+ C --> D[Identity / Entitlements]
+ C --> E[Scan Orchestrator]
+ E --> F[Durable Job Queue]
+ F --> G[Bounded Worker Pool: OCR / Parsing / Analysis]
+ G --> H[Approved Ingredient and Evidence Data]
+ G --> I[Constrained AI Explanation]
+ I --> J[Claim and Schema Validation]
+ J --> K[Versioned Report]
+ K --> L[(Managed PostgreSQL HA)]
+ E --> M[Private Object Storage]
+ C --> N[Cache / Rate Limits / Quotas]
+ O[Metrics / Logs / Alerts] --- C
+ O --- G
+ O --- L
+ P[Billing Provider] --> Q[Verified Purchase Handler]
+ Q --> D
+```
+Requirements:
+- Stateless API instances that can scale horizontally.
+- Durable asynchronous jobs for expensive OCR/analysis.
+- Bounded worker concurrency, queue limits, backpressure and admission control.
+- Managed PostgreSQL with appropriate high availability, backups and connection pooling.
+- Private image storage, short-lived signed URLs, upload limits and retention controls.
+- Secrets manager, TLS, least privilege and isolated development/staging/production environments.
+- Health/readiness checks, graceful shutdown, rolling deployment and rollback.
+- Monitoring for API, database, queue, OCR/AI provider and billing failures.
+- Prefer a modular monolith initially. Split services only when measured scale or team boundaries justify it.
+4. Android production requirements
+Reliability
+- Remove mock/demo responses from production builds.
+- Use typed API models, explicit error states, lifecycle-aware ViewModels and non-blocking work.
+- Recover from process recreation, interrupted uploads, timeouts and temporary offline conditions.
+- Use bounded retries with exponential backoff and jitter; do not retry non-idempotent operations without idempotency.
+- Preserve recoverable scan drafts without putting large bitmaps into saved instance state.
+- Add crash reporting and performance monitoring with sensitive-data redaction.
+Scan flow
+1. Start scan and check server-side entitlement/quota.
+2. Capture or import image; validate type, size and readability.
+3. Use on-device OCR where practical; use server fallback only if needed and privacy-reviewed.
+4. Preserve original OCR output.
+5. Let the user review/correct extracted text.
+6. Normalize and match ingredients; keep unmatched text visible.
+7. Retrieve approved evidence and run deterministic rules.
+8. Generate constrained explanation only from retrieved evidence.
+9. Validate claims and schema; persist a versioned report.
+10. Show findings, sources, unknowns and limitations.
+11. Support retry, save, delete and feedback.
+Mobile security
+- Use platform-appropriate secure token storage; never log tokens.
+- Enforce HTTPS and review Android network security configuration.
+- Never trust client-supplied user IDs, roles, subscription status or quota counts.
+- Review exported components, deep links, debug flags, backup rules and WebViews if present.
+- Minimize permissions; test permission-denied paths.
+- Scan dependencies and use supported versions.
+- Obfuscation is not a security boundary.
+Preserve the design palette: Smoky Black #11120D, Olive Drab #565449, Bone #D8CFBC, Floral White #FFFBF4. Test TalkBack, font scaling, contrast, touch targets, small screens and all loading/error states.
+5. Backend requirements
+API
+- Version endpoints, e.g. /v1; validate schemas, content types, parameters and uploads.
+- Authenticate and authorize every user-owned resource.
+- Use stable error codes, correlation IDs, pagination and bounded response sizes.
+- Set request timeouts, body limits and rate limits.
+- Use idempotency keys for scan creation, analysis and billing-sensitive mutations.
+- Redact sensitive fields from logs; never return stack traces or secrets.
+- An upstream timeout must not become a safety finding.
+Jobs and resilience
+- Use durable jobs for expensive processing.
+- Make jobs idempotent and safe to retry.
+- Bound retries, concurrency, timeouts and external-provider spend.
+- Define dead-letter and manual replay policies.
+- Store job state so users can check progress or resume.
+- Use backpressure/admission control instead of accepting unlimited work.
+- Avoid duplicate reports, charges or quota consumption during retries.
+- Gracefully degrade nonessential features when a provider is unavailable.
+Ingredient-analysis integrity
+- Separate ingredient identity, evidence, regulatory rules, user preferences and generated explanations.
+- Review/approve evidence records before production use.
+- Track source, organization, jurisdiction, effective date, review date and version.
+- Use deterministic rules for regulatory status and preferences.
+- Constrain AI to retrieved evidence; validate source IDs and claims.
+- Defend against prompt injection in label text.
+- If evidence is missing, return “insufficient information.”
+- Save the evidence, rule, schema, prompt and model versions used by each report.
+Billing
+- Verify purchases server-side with the billing provider.
+- Client entitlement values are never authoritative.
+- Handle pending, active, grace, cancelled, expired, refunded and revoked states as applicable.
+- Reconcile provider notifications and support restore purchases.
+- Enforce quotas atomically on the server.
+6. Database and privacy
+- Use version-controlled migrations, foreign keys, unique constraints and measured indexes.
+- Use transactions for report persistence and quota consumption.
+- Use a bounded connection pool; additional API replicas must not overwhelm the database.
+- Test query performance with realistic data volume.
+- Separate runtime, migration, reporting and admin roles where feasible.
+- Define retention separately for images, OCR text, reports, preferences, analytics, billing and audit logs.
+- Provide data export/deletion where required. Deletion jobs must be retryable and auditable.
+- Document legal retention exceptions and backup expiry.
+- Encrypt and restrict backups; test restoration regularly.
+- Define RPO (acceptable data loss) and RTO (target recovery time).
+- Test database failover and application recovery.
+7. Capacity objective: 10,000+ concurrent users
+“10,000 concurrent users” is not precise enough to size infrastructure without request rates, scan frequency, image sizes, traffic bursts and latency objectives.
+Required workload profiles
+- 10,000 active clients using the app.
+- Read-heavy browsing/history traffic.
+- A burst of 10,000 scan submissions.
+- Sustained requests at an agreed requests-per-second rate.
+- Large image uploads.
+- OCR/AI latency, concurrency and quota limits.
+- A partial dependency failure while traffic continues.
+For context, 10,000 users each making one API request every 10 seconds average about 1,000 requests/second. This is an example, not a sizing guarantee.
+Controls
+- Horizontally scale stateless API instances behind a load balancer.
+- Keep expensive work out of synchronous request threads.
+- Use durable queues, bounded workers, queue limits and backpressure.
+- Scale workers based on queue depth/age while enforcing provider and cost limits.
+- Apply per-account and per-IP abuse controls.
+- Cache safe public/reference data; never publicly cache private reports.
+- Bound database connections and measure slow queries.
+- Add timeouts/circuit breakers for external services.
+- Display queued/progress status instead of losing a scan when work is delayed.
+- Do not claim a scan is complete just because a job was accepted.
+Do not invent server sizes or replica counts before load testing the actual implementation.
+8. Service objectives and load testing
+Agree on targets before testing:
+- Monthly availability objective.
+- p95/p99 latency for reads and scan submission.
+- Acceptable server error rate.
+- Queue wait time and end-to-end scan completion time.
+- RTO/RPO.
+- Maximum acceptable cost per scan.
+- Security release thresholds.
+Use k6, Gatling or Locust with synthetic accounts and non-sensitive test data.
+
+Test:
+1. Smoke test.
+2. Ramp to 10,000 virtual users.
+3. Sustained load.
+4. Sudden spike.
+5. Simultaneous scan burst.
+6. Long soak test for leaks and queue growth.
+7. Slow/unavailable OCR, AI, queue and database failover.
+8. Recovery and queue drain.
+9. Abuse: oversized uploads, invalid tokens, repeated requests and quota bypass.
+Record:
+- Test script/version, environment and configuration.
+- Virtual users, request mix, requests/second and completed scans/second.
+- p50/p95/p99 latency, error rates and timeouts.
+- CPU, memory, network and disk.
+- DB connections, slow queries, locks and saturation.
+- Queue depth, oldest-job age, retries and dead-letter count.
+- Provider concurrency, rate-limit errors and cost.
+- Recovery time and data-integrity results.
+Pass condition: the agreed workload is sustained while latency/error objectives are met, with no cross-user data exposure, data corruption, uncontrolled queue growth or runaway provider spend. Fix bottlenecks and rerun. Do not exceed third-party quotas or terms during testing.
+9. Security verification checklist
+Identity/API
+- [ ] Token lifecycle and session revocation tested.
+- [ ] Every endpoint checks ownership and permissions.
+- [ ] IDOR and horizontal/vertical privilege escalation tests pass.
+- [ ] Admin access is least-privilege and audited.
+- [ ] Request validation, rate limits and upload limits tested.
+- [ ] Injection and replay/idempotency behavior tested.
+- [ ] Errors reveal no secrets or internal stack traces.
+Mobile/infrastructure
+- [ ] No production secrets in APK or repository.
+- [ ] Release manifest and exported components reviewed.
+- [ ] Secure storage and log redaction verified.
+- [ ] TLS, private object storage and managed secrets verified.
+- [ ] Database and backup access restricted.
+- [ ] Dependency/static analysis and secret scans run.
+- [ ] Retention, export, deletion and backup restoration tested.
+- [ ] Incident response and key rotation documented.
+Analysis integrity
+- [ ] Findings link to approved evidence.
+- [ ] Unmatched ingredients remain unknown.
+- [ ] AI cannot invent evidence or alter deterministic status.
+- [ ] Source outages cannot become “no concern” results.
+- [ ] Prompt injection and malformed model output tested.
+- [ ] Report versions are recorded.
+Use OWASP MASVS and OWASP API Security Top 10 as reference frameworks. A checklist is not a substitute for a threat model or security review.
+10. CI/CD and release
+Pull request pipeline:
+1. Format/lint.
+2. Unit tests.
+3. Integration/API contract tests.
+4. Static analysis, dependency scanning and secret scanning.
+5. Android/backend builds.
+6. Migration validation.
+7. Publish test results.
+Deployment:
+1. Deploy to staging using repeatable infrastructure configuration.
+2. Run smoke, regression and migration tests.
+3. Run relevant security/load tests.
+4. Require production approval.
+5. Use rolling/canary deployment where supported.
+6. Release Android gradually.
+7. Monitor errors and business metrics.
+8. Roll back using documented criteria.
+9. Rehearse rollback and forward-fix procedures.
+Never run destructive database migrations without review and recovery planning.
+11. Monitoring and runbooks
+Alert on API latency/errors, resource saturation, DB connection exhaustion, queue backlog, provider failures/spend spikes, failed scans, billing mismatch, upload errors, backup failures, suspicious abuse and deletion failures.
+
+Each runbook must cover detection, impact, containment, investigation, escalation, recovery, communication and post-incident review.
+12. Required test coverage
+- Unit: parser, normalization, rules and state transitions.
+- Integration: database, storage, queue, identity and billing.
+- API contract and authorization/IDOR.
+- Android end-to-end: onboarding, scan, correction, report, history, delete and subscription.
+- Accessibility and manual TalkBack checks.
+- OCR/matching evaluation set.
+- AI grounding, citation and adversarial-input tests.
+- Rate-limit, retry and idempotency tests.
+- Load, spike, soak, failover and recovery tests.
+- Migration and backup-restore tests.
+13. Implementation backlog
+P0 — Production blockers
+- [ ] Audit prototype and remove mock production paths.
+- [ ] Fix critical security/privacy vulnerabilities.
+- [ ] Verify authentication and resource authorization.
+- [ ] Implement durable scan processing and honest error states.
+- [ ] Validate evidence-grounded findings.
+- [ ] Add migrations, backups and restore test.
+- [ ] Configure secrets and environment separation.
+- [ ] Add monitoring and incident alerts.
+P1 — Reliability and scale
+- [ ] Add idempotency, timeouts, retries and backpressure.
+- [ ] Bound worker concurrency and database connections.
+- [ ] Tune queries and indexes.
+- [ ] Verify subscription and quota enforcement.
+- [ ] Add repeatable load tests and baseline.
+- [ ] Complete failover and recovery drills.
+P2 — Release quality
+- [ ] Complete accessibility and device coverage.
+- [ ] Complete privacy/export/delete flows.
+- [ ] Complete CI/CD and rollback procedures.
+- [ ] Remediate security-review findings.
+- [ ] Pass 10,000-user workload and soak tests.
+- [ ] Prepare support and incident runbooks.
+14. Definition of done
+A task is done only when code is reviewed, tests pass, security/privacy implications are checked, monitoring exists for relevant failures, docs are updated, and staging verification passes.
+Production release gate
+- [ ] No demo/mock dependencies in production paths.
+- [ ] End-to-end journeys pass.
+- [ ] No unresolved critical security issues.
+- [ ] Data retention, deletion, backup and restore are tested.
+- [ ] Monitoring, alerting and runbooks are operational.
+- [ ] Load test demonstrates the agreed 10,000-concurrent-user workload.
+- [ ] Latency, error, queue and cost objectives are met.
+- [ ] Dependency-failure and recovery tests pass.
+- [ ] Rollback has been rehearsed.
+- [ ] Release owner signs off on recorded evidence.
+15. Master instruction for an AI coding agent
+You are the senior engineer responsible for converting the existing ScanSafe.AI prototype into a production-grade Android application and backend. First inspect the entire repository and create PRODUCTION_AUDIT.md; do not perform a blind rewrite. Compare the code against PRD.md, Design.md, Architecture.md, Agents.md, Backend.md, App-Flow.md and Database.md where available. Classify every requirement as implemented and tested, implemented but unverified, partial, mock/demo, missing or blocked.
+
+Produce a prioritized plan with dependencies and acceptance tests. Implement in small, reviewable phases while preserving the approved UI and working behavior. Replace mock production paths with real implementations. Enforce server-side authentication, authorization, quotas and billing; protect images and personal data; implement migrations, backups, monitoring, idempotent jobs, bounded retries, rate limits and honest error states. Keep expensive processing asynchronous and bounded. Use approved evidence and deterministic rules for ingredient findings; constrain and validate AI-generated text.
+
+Add automated unit, integration, API contract, Android end-to-end, security, migration, backup/restore and load tests. Create repeatable tests for 10,000 concurrent virtual users and a burst of simultaneous scan submissions. Measure throughput, p95/p99 latency, error rates, DB saturation, queue depth, processing time and provider limits. Tune and rerun until agreed targets pass. Never claim capacity or security that has not been measured.
+
+Do not invent credentials, test results, source evidence, legal compliance or deployment success. If access or information is missing, document the blocker and safely continue with available work. At each phase report files changed, decisions, tests run/results, unresolved risks and next steps. Do not mark a phase complete unless its acceptance criteria pass.
+
+16. Inputs needed to finalize deployment sizing
+- Actual source repository and current stack.
+- Cloud/hosting provider and region.
+- OCR location and AI provider/quotas.
+- Expected scan frequency, image size and traffic mix.
+- Desired latency and availability objectives.
+- Data retention/privacy requirements.
+- Monthly infrastructure budget.
+- Whether real users or production data are already present.
+This document defines the work and evidence required. It does not claim the existing prototype already satisfies these requirements. 1. Production architecture I recommend
+Android application
+
+Kotlin · Jetpack Compose · MVVM · local caching
+
+
+CDN / WAF / API gateway
+
+TLS · abuse protection · authentication · rate limits
+
+
+Horizontally scalable application layer
+API instances
+
+Multiple replicas
+
+
+Worker pool
+
+OCR and analysis jobs
+
+
+
+
+
+PostgreSQL
+
+Managed HA · backups · pooling
+
+
+Redis / queue
+
+Cache · quotas · jobs
+
+
+Object storage
+
+Private label images
+
+
+Monitoring
+
+Logs · metrics · alerts. 2. Define what “10,000 concurrent users” actually means
+The system must be sized for the workload, not just the number of installed apps.
+Scenario	Required engineering response
+10,000 users online	Efficient authentication, connections, caching and database access
+10,000 users browsing simultaneously	Scalable API instances and bounded database connections
+10,000 users starting scans together	Queueing, admission control, worker autoscaling and backpressure
+10,000 expensive AI analyses at once	Provider quota management, concurrency limits, retries and cost controls
+Sudden traffic spike	Load shedding, graceful degradation and automatic recovery
+
+For example, 10,000 users each making one request every 10 seconds produce roughly 1,000 requests per second. If all 10,000 submit a scan simultaneously, the scan-processing pipeline must absorb that burst without overwhelming the database or AI provider.
+
+For ScanSafe.AI, I would use on-device OCR where practical, asynchronous backend analysis, and a durable job queue. The app should show scan progress and recover from temporary failures instead of freezing or losing the user's work.
+3. Production security requirements
+Authentication and authorization
+
+Secure session handling, short-lived access tokens where appropriate, refresh-token protection, server-side ownership checks, role-based access for administrators, and protection against unauthorized access to another user's reports.
+
+
+
+Secrets and data protection
+
+Never embed backend, database, or AI-provider secrets in the APK. Use managed secrets, TLS, private object storage, encrypted backups, and carefully controlled access to personal preferences and scan images.
+
+
+
+API and abuse protection
+
+Validate every request, enforce upload limits, rate-limit expensive operations, protect against injection and broken access control, and prevent users from bypassing free scan quotas or subscription entitlements.
+
+
+
+Database and recovery
+
+Use managed PostgreSQL with high availability, connection pooling, tested backups, point-in-time recovery where supported, safe migrations, and tested restoration procedures. A backup is not sufficient until restoration has been tested.
+
+
+
+Monitoring and incident response
+
+Monitor errors, latency, resource saturation, queue delays, failed scans, database connections, and AI-provider limits. Set alerts and establish procedures for responding to incidents.
+
+
+
+Security should be tested against the OWASP Mobile Application Security Verification Standard (MASVS) and OWASP API Security risks. No single checklist can guarantee complete security.
+4. Production implementation roadmap
+I would take the prototype through these phases, with each phase passing its tests before moving to the next.
+1
+
+Audit the existing prototype
+
+Inspect the source code, dependencies, authentication, APIs, database, scanning pipeline, AI integrations, and existing tests. Identify demo-only functionality, fake data, insecure defaults, and bottlenecks.
+
+Deliverable: prioritized production-readiness report.
+
+
+
+2
+
+Harden the backend and database
+
+Implement real persistence, authentication and authorization, data validation, database migrations, durable scan jobs, quotas, billing verification, and privacy controls.
+
+Deliverable: functioning production backend in staging.
+
+
+
+3
+
+Harden the Android application
+
+Implement reliable API integration, secure session storage, camera and OCR recovery, offline/error states, retry handling, crash reporting, and subscription synchronization.
+
+Deliverable: signed release candidate with no demo-only dependencies.
+
+
+
+4
+
+Scale and resilience testing
+
+Run load tests with 10,000 virtual users, test scan bursts, simulate dependency failures, verify database connection limits, and measure latency, error rate, throughput and cost.
+
+Deliverable: measured capacity report and resolved bottlenecks.
+
+
+
+5
+
+Security validation and production release
+
+Test authorization boundaries, upload handling, account deletion, rate limits, dependency vulnerabilities, backup restoration and incident recovery. Deploy gradually with monitoring and rollback.
+
+Deliverable: release evidence, operational runbooks and production deployment. 2. Define what “10,000 concurrent users” actually means
+The system must be sized for the workload, not just the number of installed apps.
+Scenario	Required engineering response
+10,000 users online	Efficient authentication, connections, caching and database access
+10,000 users browsing simultaneously	Scalable API instances and bounded database connections
+10,000 users starting scans together	Queueing, admission control, worker autoscaling and backpressure
+10,000 expensive AI analyses at once	Provider quota management, concurrency limits, retries and cost controls
+Sudden traffic spike	Load shedding, graceful degradation and automatic recovery
+
+For example, 10,000 users each making one request every 10 seconds produce roughly 1,000 requests per second. If all 10,000 submit a scan simultaneously, the scan-processing pipeline must absorb that burst without overwhelming the database or AI provider.
+
+For ScanSafe.AI, I would use on-device OCR where practical, asynchronous backend analysis, and a durable job queue. The app should show scan progress and recover from temporary failures instead of freezing or losing the user's work.
+3. Production security requirements
+Authentication and authorization
+
+Secure session handling, short-lived access tokens where appropriate, refresh-token protection, server-side ownership checks, role-based access for administrators, and protection against unauthorized access to another user's reports.
+
+
+
+Secrets and data protection
+
+Never embed backend, database, or AI-provider secrets in the APK. Use managed secrets, TLS, private object storage, encrypted backups, and carefully controlled access to personal preferences and scan images.
+
+
+
+API and abuse protection
+
+Validate every request, enforce upload limits, rate-limit expensive operations, protect against injection and broken access control, and prevent users from bypassing free scan quotas or subscription entitlements.
+
+
+
+Database and recovery
+
+Use managed PostgreSQL with high availability, connection pooling, tested backups, point-in-time recovery where supported, safe migrations, and tested restoration procedures. A backup is not sufficient until restoration has been tested.
+
+
+
+Monitoring and incident response
+
+Monitor errors, latency, resource saturation, queue delays, failed scans, database connections, and AI-provider limits. Set alerts and establish procedures for responding to incidents.
+
+
+
+Security should be tested against the OWASP Mobile Application Security Verification Standard (MASVS) and OWASP API Security risks. No single checklist can guarantee complete security.
+4. Production implementation roadmap
+I would take the prototype through these phases, with each phase passing its tests before moving to the next.
+1
+
+Audit the existing prototype
+
+Inspect the source code, dependencies, authentication, APIs, database, scanning pipeline, AI integrations, and existing tests. Identify demo-only functionality, fake data, insecure defaults, and bottlenecks.
+
+Deliverable: prioritized production-readiness report.
+
+
+
+2
+
+Harden the backend and database
+
+Implement real persistence, authentication and authorization, data validation, database migrations, durable scan jobs, quotas, billing verification, and privacy controls.
+
+Deliverable: functioning production backend in staging.
+
+
+
+3
+
+Harden the Android application
+
+Implement reliable API integration, secure session storage, camera and OCR recovery, offline/error states, retry handling, crash reporting, and subscription synchronization.
+
+Deliverable: signed release candidate with no demo-only dependencies.
+
+
+
+4
+
+Scale and resilience testing
+
+Run load tests with 10,000 virtual users, test scan bursts, simulate dependency failures, verify database connection limits, and measure latency, error rate, throughput and cost.
+
+Deliverable: measured capacity report and resolved bottlenecks.
+
+
+
+5
+
+Security validation and production release
+
+Test authorization boundaries, upload handling, account deletion, rate limits, dependency vulnerabilities, backup restoration and incident recovery. Deploy gradually with monitoring and rollback.
+
+Deliverable: release evidence, operational runbooks and production deployment.

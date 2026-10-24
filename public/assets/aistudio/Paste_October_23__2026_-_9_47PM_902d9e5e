@@ -1,0 +1,505 @@
+ScanSafe.AI — Product Requirements Document
+Platform: Android | Status: Proposed specification
+1. Overview
+ScanSafe.AI helps users scan food and beauty ingredient labels, review extracted text, and understand evidence-backed ingredient findings. It separates hazard evidence, allergens, regulatory restrictions, personal preferences, and unknown ingredients.
+
+The product must not promise universal product safety, medical diagnosis, or counterfeit detection unless separately implemented and validated.
+2. Goals
+- Reduce the effort needed to read ingredient labels.
+- Present plain-language findings with traceable sources.
+- Allow correction of OCR errors.
+- Support optional user preferences.
+- Provide scan history and saved products with user controls.
+- Support consumer subscriptions and possible B2B services.
+3. Target users
+1. Skincare and beauty consumers.
+2. Food-label readers and families.
+3. Users with dietary or ingredient preferences.
+4. Later: retailers, publishers, and businesses needing ingredient analysis.
+Recommended initial focus: skincare and beauty labels, expanding after coverage and accuracy are validated.
+4. Core user journey
+Launch → onboarding → home → scan or manual entry → capture/import image → OCR → review/correct text → analyze → view findings and evidence → save/share/report issue.
+5. Functional requirements
+- Onboarding: explain purpose and limitations; allow skip.
+- Scanning: camera, image import, crop, multiple images, manual-entry fallback.
+- OCR: preserve original extraction; allow correction; expose uncertainty.
+- Ingredient matching: normalize names and aliases; keep unmatched items visible.
+- Analysis: retrieve approved evidence; apply deterministic rules; use constrained AI only for supported explanations.
+- Results: show findings, source links, jurisdiction/date when relevant, limitations, matched and unmatched ingredients.
+- History: list, search, save, delete and export scans according to policy.
+- Preferences: support optional dietary and ingredient preferences; keep preference mismatches distinct from hazard findings.
+- Accounts: secure sign-in, recovery, sign-out and account deletion; guest mode is a product decision.
+- Billing: configurable free quota, premium entitlements, purchase verification and restore.
+- Feedback: report OCR or analysis issues for review.
+6. Non-functional requirements
+- Security: authentication, authorization, rate limits, secret management.
+- Privacy: data minimization, consent, retention and deletion.
+- Reliability: retryable requests, idempotency, monitoring.
+- Accessibility: screen-reader support, text scaling, contrast, touch targets.
+- Auditability: save evidence/rule versions used by each report.
+- Maintainability: modular architecture, migrations, tests and CI/CD.
+7. Metrics
+First-scan completion, OCR correction rate, ingredient matching precision/recall, evidence coverage, unsupported-claim rate, 7/30-day retention, paid conversion, churn, cost per scan and feedback rate.
+8. Acceptance criteria
+- Users can scan, correct, and analyze a label.
+- Substantive findings link to reviewed evidence.
+- Unknown items are not automatically classified as harmful or harmless.
+- Failed OCR or evidence retrieval is shown as a limitation/error.
+- Users can inspect sources and delete retained data.
+- Entitlements are verified server-side.
+- Core flows pass accessibility, security, and device tests.     ScanSafe.AI — Design System and UI/UX Specification
+Visual direction: Minimalist, editorial, hand-drawn botanical.
+1. Principles
+- Clarity before decoration.
+- Evidence before claims.
+- Calm, not alarmist.
+- Show uncertainty rather than guessing.
+- Color is never the only status indicator.
+- Explain why permissions and data are needed.
+2. Core palette
+Token	Hex	Use
+smoky-black	#11120D	Main text, primary buttons, dark surfaces
+olive-drab	#565449	Secondary actions and muted surfaces
+bone	#D8CFBC	Soft panels and illustration fills
+floral-white	#FFFBF4	Main background and light cards
+
+
+Suggested semantic additions (contrast-test before release): info #315C78, success #42634A, caution #8A5A16, critical #8D302A, unknown #565449. These do not replace text explanations or evidence.
+3. Typography
+Use a licensed editorial serif such as DM Serif Display or Cormorant Garamond for brand/display headings; use Roboto or Inter for interface text.
+Style	Size	Use
+Display	32–36 sp	Splash/hero
+H1	28–32 sp	Screen title
+H2	22–24 sp	Section
+H3	18–20 sp	Cards
+Body	16 sp	Main copy
+Small body	14 sp	Supporting text
+Label	12–14 sp	Metadata
+Button	14–16 sp	Actions
+
+
+Support Android font scaling.
+4. Shape and spacing
+- 4 dp spacing scale: 4, 8, 12, 16, 20, 24, 32, 40, 48.
+- Default horizontal padding: 20 dp, responsive to window size.
+- Corner radii: 8 dp small, 14 dp medium, 20 dp large, 28 dp hero.
+- Prefer tonal surfaces and subtle borders over heavy shadows.
+- Use Material 3 interaction states.
+5. Illustration and iconography
+Use thin charcoal outlines, organic botanical motifs, and muted Olive Drab/Bone fills. Keep illustrations mainly on onboarding and empty states. Keep scanning and analysis screens functional. Give meaningful icon-only controls accessible descriptions.
+6. Navigation
+Recommended bottom navigation: Home, History, prominent Scan action, Saved, Profile. If five destinations crowd small screens, use four destinations and a central scan action or move Saved into Home/History.
+7. Screen specifications
+- Splash: Floral White, botanical mark, ScanSafe wordmark, “Scan. Check. Stay Safe.”
+- Onboarding: “Know what’s inside”; “Understand the evidence”; “Make informed choices”; Skip and Get started.
+- Home: wordmark, optional search, prominent Scan a product card, manual entry, recent scans, saved products, bottom navigation.
+- Scanner: camera preview, capture, flash, close, gallery import, alignment frame, permission rationale, retake/crop/multiple images.
+- Text review: original image, editable OCR text, uncertainty highlights, Retake and Analyze actions; preserve raw OCR separately.
+- Progress: steps for reading label, identifying ingredients, checking evidence, preparing report; no fabricated percentage.
+- Result: overview, findings, preferences, unmatched items, sources, Save/Share/Report issue. Prefer “No relevant concern identified in checked sources” over a universal “Safe” claim.
+- Finding detail: category, explanation, evidence strength, conditions, jurisdiction, source and date.
+- Unknown ingredient: show exact text; edit/retry/manual lookup; state that no match proves neither harm nor safety.
+- Product/ingredient details: Overview, Ingredients, Findings, Evidence sources; never invent unavailable product details.
+- History: search/filter, date, label/product, report status, delete.
+- Saved products: list/watchlist and last scan date; claim monitoring only if implemented.
+- Profile: preferences, region, subscription, notifications, privacy, export, account deletion, support and legal.
+- Paywall: exact benefits, price, billing period, renewal/trial terms, restore purchases and clear close behavior.
+8. Reusable components
+PrimaryButton, SecondaryButton, IconButton, SearchField, IngredientInput, IngredientChip, FindingCard, EvidenceSourceRow, ProductSummaryCard, ScanHistoryItem, StatusLabel, ConfidenceIndicator, EmptyState, ErrorState, PermissionRationale, LoadingStepList, BottomNavigation, ConfirmationDialog, SubscriptionPlanCard.
+
+Define pressed, focused, disabled, loading, and error states where relevant.
+9. Error states
+Design for denied camera permission, offline, unreadable image, empty/partial OCR, unmatched ingredient, unavailable evidence source, analysis outage, quota reached, expired session, interrupted upload, failed report, billing pending/failed, empty history and empty saved list. A technical failure must never become a safety finding.
+10. Accessibility
+Support TalkBack, logical focus order, font scaling, 48 dp target guidance, contrast checks, non-color status cues, small and large screens, landscape and reduced motion.
+11. Tone
+Use calm language such as “The evidence is limited” and “We couldn’t identify this ingredient.” Avoid unsupported alarmist claims or “100% safe.”   ScanSafe.AI — Technical Architecture
+Recommended approach: Android client + versioned REST API + modular monolith backend.
+1. Stack
+Android: Kotlin, Jetpack Compose, Material 3, MVVM, Coroutines/Flow, Navigation Compose, CameraX, ML Kit Text Recognition, Room, DataStore, managed authentication.
+
+Backend: choose Kotlin/Ktor or Kotlin/Java/Spring Boot; do not maintain both initially.
+
+Infrastructure: PostgreSQL, private object storage, optional Redis, managed job queue when needed, FCM, CI/CD, structured logs, metrics, tracing, error reporting and managed backups.
+2. Logical flow
+```mermaid
+flowchart TD
+ A[Android App] --> B[Versioned API]
+ B --> C[Identity and Entitlements]
+ B --> D[Scan Orchestrator]
+ D --> E[Image Processing / OCR]
+ E --> F[Ingredient Parser]
+ F --> G[Normalization and Alias Matching]
+ G --> H[Approved Evidence Retrieval]
+ H --> I[Deterministic Rules Engine]
+ I --> J[Constrained AI Explanation]
+ J --> K[Schema and Claim Validation]
+ K --> L[Versioned Report]
+ L --> M[(PostgreSQL)]
+ N[Admin Console] --> O[Evidence Review API]
+ O --> H
+ P[Billing Provider] --> Q[Verified Purchase Handler]
+ Q --> C
+```
+3. Request flow
+1. Create scan session.
+2. Upload image through bounded authenticated flow.
+3. Extract text and preserve original OCR.
+4. User reviews/corrects text.
+5. Parse and normalize ingredient names.
+6. Retrieve reviewed, jurisdiction-aware evidence.
+7. Evaluate deterministic rules.
+8. Generate constrained explanation from retrieved evidence.
+9. Validate claims and schema.
+10. Persist report with source/rule versions.
+11. Return report and support save/share/feedback.
+4. Modules
+Identity; scans/images; OCR/parser; ingredient catalogue; evidence; rules engine; explanation; reports/history; preferences/privacy; billing/entitlements; feedback/review; admin audit; monitoring/abuse prevention.
+
+Start as a modular monolith; extract services only when measured scale or team boundaries justify it.
+5. API conventions
+- Prefix /v1; validate JSON schemas.
+- Authenticate and authorize every user-owned resource.
+- Use pagination, idempotency keys, rate limits and stable error codes.
+- Use asynchronous jobs for expensive operations.
+- Never interpret upstream timeouts as positive or negative findings.
+Suggested endpoints:
+POST /v1/scans, POST /v1/scans/{id}/images, POST /v1/scans/{id}/extract, PUT /v1/scans/{id}/ingredients, POST /v1/scans/{id}/analyze, GET /v1/scans/{id}/report, GET /v1/scans, DELETE /v1/scans/{id}, GET /v1/ingredients/{id}, GET /v1/products/search, GET /v1/subscription, POST /v1/feedback.
+6. Security
+TLS, secrets manager, short-lived upload/download links, private storage, strict resource ownership, rate limiting, redacted logs, least-privilege roles, tested backups, dependency scanning, account deletion, retention controls and admin audit logs.
+7. Environments and CI
+Separate local, staging and production credentials/data. CI: lint/format → unit tests → integration tests → static/dependency checks → staging deploy → smoke/regression tests → approved production deploy → staged rollout.
+8. Observability
+Monitor API latency/errors, OCR failures, correction rate, ingredient match coverage, evidence failures, unsupported-claim validation, queue delay, AI cost, billing mismatches and deletion-job failures.
+9. Decisions to finalize
+Ktor vs Spring Boot; identity provider; on-device OCR vs server fallback; image retention; queue/hosting; AI provider and data terms; initial jurisdiction and category scope.  ScanSafe.AI — AI Agents and Automation
+1. Core rule
+AI assists with text structuring, match suggestions and explanations. It does not independently certify product safety, invent evidence, override deterministic rules, or publish evidence records. All model output is untrusted until validated.
+2. Proposed roles
+Agent A — Label Text Structurer
+Input: OCR text and optional layout metadata.
+Output: candidate ingredient list, headings, uncertain spans, parsing warnings.
+Limits: preserve raw text; do not invent missing ingredients.
+Agent B — Ingredient Match Assistant
+Input: candidate strings and approved ingredient/alias catalogue.
+Output: candidate canonical IDs, match confidence, reasons.
+Limits: ambiguous/low-confidence matches remain unresolved or require user review. No independent safety claims.
+Agent C — Evidence Summarizer
+Input: evidence records retrieved by the backend.
+Output: plain-language summary linked to supplied source IDs.
+Limits: cannot add unsupported facts, sources, jurisdiction rules or exposure assumptions.
+Agent D — Report Formatter
+Input: validated rule outcomes and summaries.
+Output: schema-compliant report text.
+Limits: cannot alter status, severity, or confidence.
+Agent E — Feedback Triage
+Input: user report and relevant report IDs.
+Output: suggested category and reviewer queue.
+Limits: human reviewers approve evidence changes.
+3. Keep deterministic
+Authentication, entitlement checks, exact alias matching, jurisdiction rules, final status calculation, evidence publishing, billing, account deletion and retention enforcement must not depend on an LLM.
+4. Pipeline
+```mermaid
+flowchart TD
+ A[OCR Text] --> B[Structurer]
+ B --> C[Schema Validation]
+ C --> D[Canonical Matcher]
+ D --> E{Match Unambiguous?}
+ E -- No --> F[Unmatched / User Review]
+ E -- Yes --> G[Approved Evidence Retrieval]
+ G --> H[Deterministic Rules]
+ H --> I[Evidence Summarizer]
+ I --> J[Source and Claim Validator]
+ J --> K{Valid?}
+ K -- No --> L[Template Fallback / Review Queue]
+ K -- Yes --> M[Report Formatter]
+ M --> N[Persist Versioned Report]
+```
+5. Example structured output
+{
+  "ingredients": [
+    {
+      "raw_text": "Example ingredient",
+      "canonical_ingredient_id": "ingredient_123",
+      "match_status": "matched",
+      "match_confidence": 0.98,
+      "needs_user_review": false
+    }
+  ],
+  "warnings": [],
+  "unmatched_text": []
+}
+This is illustrative. Confidence describes the matching system, not health risk.
+6. Grounding and security
+- Retrieve evidence before generating explanations.
+- Require source IDs and reject citations absent from request context.
+- Validate JSON against versioned schemas.
+- Use bounded retries and timeouts.
+- Treat label text as untrusted input; defend against prompt injection.
+- Minimize personal data sent to models.
+- Do not train on user scan data without appropriate permission and legal basis.
+7. Failure policy
+- Invalid schema: bounded retry or deterministic fallback.
+- No evidence: “Insufficient information.”
+- Conflicting evidence: disclose conflict/source dates or review.
+- Low-confidence match: unmatched/manual review.
+- AI timeout: use validated template where possible.
+- Unsupported claim: reject and log redacted validation event.
+- Suspected high-impact false negative: incident/review process.
+8. Evaluation and governance
+Maintain manually reviewed cases covering OCR noise, synonyms, ambiguous names, unknown items, conflicting sources, regional restrictions, multilingual labels where supported and adversarial text. Measure extraction accuracy, match precision/recall, citation validity, unsupported claims and high-impact false negatives. Version prompts, models, schemas, rules and evidence data; require human approval for high-impact evidence changes. ScanSafe.AI — Backend Specification
+1. Responsibilities
+Identity/ownership validation; scan lifecycle; image and OCR processing; parsing/matching; approved evidence retrieval; deterministic analysis; constrained explanation validation; report persistence; quota/billing; feedback; privacy requests; audit.
+2. Suggested layout
+backend/
+  src/
+    identity/
+    scans/
+    image_processing/
+    ocr/
+    ingredient_parser/
+    ingredient_catalog/
+    evidence/
+    rules_engine/
+    explanation/
+    reports/
+    preferences/
+    billing/
+    feedback/
+    admin/
+    privacy/
+    observability/
+  migrations/
+  tests/
+Choose Ktor or Spring Boot for the initial backend. Prefer a modular monolith until there is a measured reason to split services.
+3. Endpoint contracts
+POST /v1/scans
+Request:
+{"input_type":"camera","category":"cosmetic","region":"IN"}
+Response:
+{"scan_id":"scn_example","status":"created"}
+POST /v1/scans/{id}/images
+Authenticate and verify ownership; enforce MIME, size, dimension and quota limits; store images privately; strip unnecessary metadata where feasible.
+POST /v1/scans/{id}/extract
+May return 202 Accepted:
+{"scan_id":"scn_example","status":"extracting","job_id":"job_example"}
+PUT /v1/scans/{id}/ingredients
+{"ingredients_text":"Aqua, Glycerin, Example Ingredient","confirmed_by_user":true}
+Preserve original OCR separately.
+POST /v1/scans/{id}/analyze
+Use idempotency for retries. Return job status if asynchronous.
+GET /v1/scans/{id}/report
+Return report status, matched/unmatched ingredients, findings, evidence references, jurisdiction, dates, dataset/rule/model versions and limitations.
+
+Other endpoints: GET /v1/scans, DELETE /v1/scans/{id}, GET /v1/ingredients/{id}, GET /v1/products/search, GET /v1/subscription, POST /v1/feedback, POST /v1/privacy/export, DELETE /v1/account.
+4. API behavior
+- Validate every request.
+- Use stable error codes such as IMAGE_UNREADABLE, INGREDIENTS_REQUIRED, EVIDENCE_UNAVAILABLE, QUOTA_EXCEEDED.
+- Include correlation IDs.
+- Paginate lists and cap page sizes.
+- Use idempotency for scan creation, analysis and billing-sensitive mutations.
+- Apply rate limits and verify ownership on every resource.
+- An upstream timeout must not become a safety finding.
+5. Scan states
+Normal: created → image_received → extracting → awaiting_confirmation → analyzing → completed.
+
+Failure/terminal: image_rejected, extraction_failed, analysis_failed, cancelled, deleted. Enforce valid transitions server-side.
+6. Evidence processing
+Evidence records require review/approval. Store source organization, URL, jurisdiction, effective/review dates and evidence summary. Use deterministic rules for restrictions/preferences. Validate AI claims against retrieved source IDs. Persist a versioned report snapshot.
+7. Billing and quotas
+Verify purchases with the provider; reconcile notifications; enforce quota server-side; handle pending, active, grace, cancelled, expired, refunded and revoked states as relevant; support restore purchases. Do not trust client entitlement values.
+8. Security/privacy
+TLS, managed secrets, private object storage, expiring links, least privilege, strict authorization, file validation, rate limiting, redacted logs, retention/deletion jobs, backup recovery tests and admin audit logs.
+9. Testing
+Unit tests for parser/matcher/rules/state machine; integration tests for DB/storage/auth/billing; API contract tests; IDOR/authorization tests; upload abuse tests; idempotency/retry tests; deletion/export tests; representative load tests; AI grounding and unsupported-claim tests.
+10. Operations
+Dashboard API latency/errors, OCR failures, matching coverage, unknown rate, analysis duration/cost, source failures, queue backlog, entitlement mismatches, deletion failures and feedback volume. canSafe.AI — Android App Flow
+1. Main flow
+```mermaid
+flowchart TD
+ A[Launch] --> B{First launch?}
+ B -- Yes --> C[Onboarding]
+ B -- No --> D[Home]
+ C --> D
+ D --> E[Scan Product]
+ D --> F[Manual Ingredient Entry]
+ D --> G[History / Saved / Profile]
+ E --> H{Camera permission?}
+ H -- No --> I[Explain Permission]
+ I --> J{Granted?}
+ J -- Yes --> K[Camera Preview]
+ J -- No --> L[Gallery or Manual Entry]
+ H -- Yes --> K
+ K --> M[Capture Images]
+ L --> N[Select Image or Enter Text]
+ M --> O[Image Quality Check]
+ O --> P{Readable?}
+ P -- No --> Q[Retake / Crop]
+ Q --> M
+ P -- Yes --> R[OCR Extraction]
+ R --> S[Review and Correct Text]
+ N --> S
+ S --> T[Normalize Ingredients]
+ T --> U[Evidence and Rules Analysis]
+ U --> V[Validate Report]
+ V --> W[Results]
+ W --> X[Ingredient Details / Sources]
+ W --> Y[Save / Share / Report Issue]
+```
+2. Screen inventory
+1. Splash
+2. Onboarding
+3. Home
+4. Camera scanner
+5. Gallery selection
+6. Crop/review image
+7. OCR progress
+8. Extracted text editor
+9. Analysis progress
+10. Result overview
+11. Finding detail
+12. Ingredient detail
+13. Evidence source detail
+14. History
+15. Saved products
+16. Preferences
+17. Subscription/paywall
+18. Notifications
+19. Help/feedback
+20. Privacy/export/delete account
+21. Authentication and recovery, if required by account policy
+3. Scan states
+idle, permission_explanation, camera_ready, capturing, image_quality_check, extracting, awaiting_text_review, analyzing, completed, failed_retryable, failed_terminal, cancelled.
+
+Keep state in a ViewModel; restore safe progress through configuration changes. Do not save large bitmaps in instance state—persist a URI/reference as appropriate.
+4. Result actions
+Open findings and sources; correct text and re-run; save/remove scan; share a limited report; report an issue; start another scan. Sharing must not expose private preferences by default.
+5. Permissions
+Request camera permission only after the user chooses Scan. Explain the purpose. If denied, offer gallery/manual entry. For permanent denial, provide a Settings route rather than repeatedly prompting. Request notifications when a user enables a feature that needs them.
+6. Account flow
+Possible policy: guest scans with a limited quota; sign-in for cross-device history, cloud saves or subscription sync. Explain stored data and deletion. Clear sensitive local cache on sign-out as appropriate.
+7. Premium flow
+User reaches quota or opens Premium → show features/price/renewal → launch billing UI → verify purchase on backend → refresh entitlement. Handle pending/failed states without granting unverified access; support restore purchases.
+8. Error recovery
+Condition	Action
+Camera denied	Gallery/manual input
+Image unreadable	Retake/crop
+OCR empty	Manual entry
+Partial OCR	Edit text
+Unknown ingredient	Show unmatched state
+Evidence unavailable	Mark incomplete; retry
+Analysis timeout	Retry idempotently
+Quota exhausted	Show reset time and optional upgrade
+Offline	Preserve safe draft and retry
+Delete scan	Confirm and apply retention/deletion policy
+
+
+9. Accessibility
+TalkBack labels, logical focus order, large touch targets, font scaling, announced status messages, non-color status cues.
+9. Release strategy
+Internal prototype → closed beta with labelled test data → accuracy review → public beta → staged production rollout → broaden categories and B2B API after validation. ScanSafe.AI — Database Design
+Database: PostgreSQL | Status: Proposed logical schema
+1. Principles
+- Stable IDs and foreign keys.
+- Preserve raw OCR separately from corrected text.
+- Record evidence provenance and review status.
+- Version reports, rules and evidence.
+- Separate preferences from evidence findings.
+- Minimize image and sensitive data retention.
+2. Entity relationships
+```mermaid
+erDiagram
+ USERS ||--o{ USER_PREFERENCES : has
+ USERS ||--o{ SCANS : creates
+ SCANS ||--o{ SCAN_IMAGES : contains
+ SCANS ||--o{ EXTRACTED_INGREDIENTS : extracts
+ SCANS ||--o{ ANALYSIS_REPORTS : produces
+ INGREDIENTS ||--o{ INGREDIENT_ALIASES : has
+ INGREDIENTS ||--o{ INGREDIENT_EVIDENCE : supported_by
+ EVIDENCE_SOURCES ||--o{ INGREDIENT_EVIDENCE : contains
+ ANALYSIS_REPORTS ||--o{ REPORT_FINDINGS : includes
+ INGREDIENTS ||--o{ REPORT_FINDINGS : refers_to
+ USERS ||--o{ SUBSCRIPTIONS : owns
+ USERS ||--o{ FEEDBACK_REPORTS : submits
+ USERS ||--o{ AUDIT_EVENTS : generates
+```
+3. Tables
+users
+id UUID PK, auth_provider_subject UNIQUE, optional email, account_status, created_at, updated_at, deleted_at. Avoid storing passwords if managed auth is used.
+user_preferences
+id, user_id FK, preference_type, preference_value JSONB or normalized relation, is_enabled, timestamps. Restrict access to sensitive preferences.
+scans
+id, nullable user_id, category, status, region_code, raw_ocr_text, corrected_ingredients_text, ocr_engine_version, timestamps, deleted_at, retention_expires_at.
+scan_images
+id, scan_id FK, private storage_key, MIME type, size, dimensions, timestamps, deletion/retention fields. Never use permanent public image URLs.
+ingredients
+id, canonical_name, category, description, record_status, timestamps.
+ingredient_aliases
+id, ingredient_id FK, alias_text, normalized_alias, language_code, source. Index normalized aliases and enforce appropriate uniqueness.
+extracted_ingredients
+id, scan_id FK, raw_text, normalized_text, nullable ingredient_id FK, match_status, match_confidence, user_confirmed, position_index, created_at. Match confidence is not a health-risk score.
+evidence_sources
+id, organization, title, URL, source type, jurisdiction, published/retrieved dates, license notes, review status.
+ingredient_evidence
+id, ingredient_id FK, evidence_source_id FK, finding type, evidence summary/strength, conditions, jurisdiction, effective dates, reviewed date, reviewer, version, approval status.
+jurisdiction_rules
+id, ingredient_id FK, jurisdiction code, rule type, rule_payload JSONB, effective dates, source evidence FK, rule version, approval status.
+analysis_reports
+id, scan_id FK, report status, summary status, evidence dataset version, rules version, optional prompt/model versions, created time, limitations JSONB.
+report_findings
+id, report_id FK, nullable ingredient_id FK, extracted_ingredient_id FK, finding type, status, explanation, jurisdiction, created time. Prefer a report_finding_evidence join table for referential integrity.
+subscriptions
+id, user_id FK, provider, provider purchase ID, product ID, status, current period end, verified time, timestamps. Verify entitlements server-side.
+usage_quotas
+id, user/guest identifier as appropriate, period start/end, scan count, quota limit, plan code. Use atomic/transactional updates.
+feedback_reports
+id, nullable user/scan/report IDs, category, description, status, created/reviewed times.
+audit_events
+id, nullable actor, action, entity type/ID, correlation ID, redacted JSONB metadata, created time. Do not log secrets or unnecessary personal data.
+4. Indexes to consider
+- scans(user_id, created_at DESC)
+- scan_images(scan_id)
+- extracted_ingredients(scan_id, position_index)
+- ingredient_aliases(normalized_alias)
+- ingredient_evidence(ingredient_id, approval_status, jurisdiction)
+- analysis_reports(scan_id, created_at DESC)
+- subscriptions(user_id, status)
+- feedback_reports(status, created_at)
+Choose final indexes from measured query patterns.
+5. Retention and deletion
+Define separate retention for images, OCR text, corrected lists, reports, analytics, audit events and backups. Account deletion should enqueue deletion of user-linked data with retries and auditable completion. Document backup expiry and legal exceptions; do not promise immediate backup deletion unless implemented.
+6. Integrity and migrations
+Use version-controlled migrations, foreign keys, unique constraints, transactions for report persistence/quota consumption, immutable evidence publication versions and tested backup restoration. Never overwrite the evidence/rule versions used by prior reports.
+7. Example report payload
+{
+  "report_id": "rpt_example",
+  "status": "completed_with_unknowns",
+  "summary_status": "insufficient_information",
+  "matched_ingredient_count": 12,
+  "unmatched_ingredient_count": 1,
+  "findings": [
+    {
+      "ingredient_id": "ingredient_example",
+      "finding_type": "regulatory_restriction",
+      "status": "review",
+      "jurisdiction": "IN",
+      "evidence_source_ids": ["source_example"]
+    }
+  ],
+  "limitations": ["One ingredient could not be matched"]
+}
+Illustrative only; not a real analysis.  ScanSafe.AI Documentation Pack
+This pack contains seven planning documents:
+1. PRD.md — product requirements and acceptance criteria.
+2. Design.md — design system, screens, components and accessibility.
+3. Architecture.md — Android/backend architecture and operations.
+4. Agents.md — constrained AI roles, grounding, validation and governance.
+5. Backend.md — API contracts, scan lifecycle, billing and security.
+6. App-Flow.md — screen navigation, scan flow, permissions and recovery.
+7. Database.md — PostgreSQL entities, relationships, indexes and retention.
+Design palette:
+- Smoky Black #11120D
+- Olive Drab #565449
+- Bone #D8CFBC
+- Floral White #FFFBF4
+These are proposed specifications based on the ScanSafe.AI concept and supplied UI reference. They do not claim that the application or backend has already been implemented. Evidence coverage, risk methodology, privacy obligations, pricing and release thresholds must be validated before production.

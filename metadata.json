@@ -1,0 +1,6 @@
+{
+  "name": "Purescan",
+  "description": "Purescan — Scan • Understand • Choose Safe. Evidence-backed ingredient scanner for skincare, beauty, and food products with clear hazard, allergen, and regulatory insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

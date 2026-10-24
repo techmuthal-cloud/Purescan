@@ -1,0 +1,686 @@
+For ScanSafe.AI, I recommend organizing the Android app into 32 screens, grouped by user journey and production requirements. This includes the screens shown in your UI references, plus the missing states needed for a complete application.
+
+## 1. Onboarding and authentication — 5 screens
+
+| No. | Screen                              | Priority                                                 |
+| --- | ----------------------------------- | -------------------------------------------------------- |
+| 1   | Splash Screen                       | Must-have                                                |
+| 2   | Onboarding — Scan Any Product       | Must-have                                                |
+| 3   | Onboarding — Understand Ingredients | Must-have                                                |
+| 4   | Onboarding — Make Safer Choices     | Must-have                                                |
+| 5   | Sign In / Sign Up                   | Conditional — depends on guest access and account policy |
+
+## 2. Home and product scanning — 6 screens
+
+| No. | Screen                                    | Priority  |
+| --- | ----------------------------------------- | --------- |
+| 6   | Home Dashboard                            | Must-have |
+| 7   | Product Search                            | Must-have |
+| 8   | Camera Scanner                            | Must-have |
+| 9   | Gallery / Image Import                    | Must-have |
+| 10  | Crop, Align and Confirm Image             | Must-have |
+| 11  | OCR Text Review and Ingredient Correction | Must-have |
+
+## 3. Analysis and results — 6 screens
+
+| No. | Screen                                           | Priority  |
+| --- | ------------------------------------------------ | --------- |
+| 12  | Scanning / Analysis Progress                     | Must-have |
+| 13  | Product Result — No Relevant Concerns Identified | Must-have |
+| 14  | Product Result — Caution                         | Must-have |
+| 15  | Product Result — High-Risk Finding               | Must-have |
+| 16  | Product Details                                  | Must-have |
+| 17  | Ingredient Detail and Evidence Sources           | Must-have |
+
+The three result screens can share a single reusable result layout with different data and status treatments rather than requiring three separate implementations.
+
+## 4. History, saved items and discovery — 4 screens
+
+| No. | Screen                             | Priority                                       |
+| --- | ---------------------------------- | ---------------------------------------------- |
+| 18  | Scan History                       | Must-have                                      |
+| 19  | Saved Products / My Lists          | Must-have                                      |
+| 20  | Safety Tips / Ingredient Education | Recommended                                    |
+| 21  | Notifications                      | Conditional — if notifications are implemented |
+
+## 5. Profile and account settings — 6 screens
+
+| No. | Screen                                         | Priority                   |
+| --- | ---------------------------------------------- | -------------------------- |
+| 22  | Profile Dashboard                              | Must-have                  |
+| 23  | Personal Preferences                           | Must-have                  |
+| 24  | Allergens and Dietary / Ingredient Preferences | Must-have                  |
+| 25  | Subscription / Premium Plans                   | Conditional — if monetized |
+| 26  | Privacy, Data Export and Account Deletion      | Must-have                  |
+| 27  | General Settings                               | Must-have                  |
+
+## 6. Support and system states — 5 screens
+
+| No. | Screen                                         | Priority  |
+| --- | ---------------------------------------------- | --------- |
+| 28  | Help and Support                               | Must-have |
+| 29  | Report an Issue / Incorrect Analysis           | Must-have |
+| 30  | Permission Denied / Recovery                   | Must-have |
+| 31  | Offline, Error and Retry States                | Must-have |
+| 32  | Empty, Loading and Unmatched Ingredient States | Must-have |
+
+These last three are generally reusable UI states, not separate navigation destinations. They should be designed and tested within the relevant screens.
+
+## 7. Additional screens for a complete production release
+
+These depend on the features you actually implement, but should be included in the scope if applicable.
+
+| Screen or interface                    | Why it is needed                          |
+| -------------------------------------- | ----------------------------------------- |
+| Email Verification / Password Recovery | If using email-based authentication       |
+| Subscription Purchase Result           | Pending, successful or failed purchases   |
+| Restore Purchases                      | Restore eligible subscriptions            |
+| Ingredient Database Admin              | Review and maintain ingredient records    |
+| Evidence Review Dashboard              | Approve and update trusted evidence       |
+| User Feedback Management               | Investigate reported incorrect results    |
+| Operational Monitoring Dashboard       | Observe errors, queues and service health |
+
+The admin and operational interfaces are normally separate web interfaces, not Android consumer screens.
+
+## 8. Recommended bottom navigation
+
+Home
+
+History
+
+Scan
+
+Saved
+
+Profile
+
+Suggested navigation concept using your warm cream, charcoal and orange visual identity. This is a design recommendation, not a screen extracted from your reference images.
+
+## 9. Which screens should you build first?
+
+For the first production milestone, focus on these 12 screens:
+
+1. Splash
+2. Onboarding
+3. Sign In / Sign Up, if required
+4. Home Dashboard
+5. Camera Scanner
+6. Gallery / Image Import
+7. Image Crop and Confirmation
+8. OCR Review and Correction
+9. Analysis Progress
+10. Unified Result Screen
+11. Product Details and Evidence
+12. Scan History
+
+Then implement Saved Products, Preferences, Profile, Privacy, Support and Premium features.
+
+Important: A screen is not production-ready just because its UI is complete. Every screen must connect to real application logic, handle loading and error states, enforce permissions, and be tested on actual Android devices.  and handle loading and error states
+ScanSafe.AI — Complete App Flow and Application Logic
+The goal is to turn your screen designs into a working Android application where every button, scan, API request, loading indicator, error message and result has a defined behavior.
+
+The core principle is: every screen must be connected to real application logic, and every operation must have success, loading, empty, error and recovery behavior wherever applicable.
+
+I'll structure this around your 32-screen inventory and your existing ScanSafe.AI visual direction.
+
+1. Overall application flow
+1. Launch
+
+Splash → onboarding if needed
+
+2. Session and permissions
+
+Guest or signed-in state · camera permission when scanning
+
+3. Home Dashboard
+
+Search · Scan · History · Saved · Profile
+
+4. Scan workflow
+
+Camera / Gallery → Crop → OCR → Review and correct ingredients
+
+5. Analyze
+
+Normalize ingredients → match database → retrieve evidence → evaluate rules → validate report
+
+6. Results
+
+Findings · unknown ingredients · evidence · limitations
+
+7. Follow-up actions
+
+View details · save · share · report an issue · rescan
+
+The Home Dashboard remains the central navigation point. Users should be able to leave a scan, return to it safely, or recover from a failed request without having to restart the entire process.
+
+2. Detailed flow for the primary scan journey
+1
+Start scanning
+
+User taps Scan. Check camera permission, account/guest policy and scan quota.
+
+2
+Capture or import
+
+Open CameraX or the system photo picker. Allow retake, crop and alignment.
+
+3
+Validate image
+
+Check file type, dimensions, size and readability. Reject unsupported or unusable images with a recovery action.
+
+4
+Extract text
+
+Run OCR on-device where practical. Show progress only while work is actually running.
+
+5
+Review ingredients
+
+Display extracted text for correction. Keep the original OCR result and the user's corrected version separately.
+
+6
+Submit analysis
+
+Send confirmed text to the backend. Create an idempotent analysis job and show its real status.
+
+7
+Build report
+
+Match ingredients, retrieve reviewed evidence and apply deterministic rules. Validate the report before saving.
+
+8
+Present findings
+
+Show the report, matched and unmatched ingredients, evidence sources, region and limitations.
+
+3. Application logic for every screen
+A. Onboarding and authentication — screens 1–5
+Screen
+
+Real application logic
+
+Loading / error handling
+
+1. Splash
+
+Initialize configuration, load saved onboarding state and check the session with the identity provider as appropriate.
+
+If the network is unavailable, permit supported guest/offline entry. Never remain indefinitely on the splash screen.
+
+2–4. Onboarding
+
+Move between slides, persist completion, allow Skip, and respect system Back navigation.
+
+No network request required. Recover gracefully if the app is closed mid-onboarding.
+
+5. Sign In / Sign Up
+
+Validate inputs, call authentication provider, establish session, handle verification and recovery.
+
+Disable duplicate submissions; show invalid credentials, offline, rate-limit and verification states.
+
+Important: A prototype can use a simulated login, but production access control must be enforced by the backend. A client-side login flag is not authentication.
+
+B. Home and scanning — screens 6–11
+Screen
+
+Real application logic
+
+Loading / error handling
+
+6. Home Dashboard
+
+Fetch recent scans, saved items and available actions.
+
+Show skeleton cards; if history fails, retain the usable scan action.
+
+7. Product Search
+
+Search the available product catalogue or ingredient index with debouncing and pagination.
+
+Show no-results state, network error and Retry.
+
+8. Camera Scanner
+
+Request camera access when needed, initialize CameraX, capture an image and create a scan draft.
+
+Handle denied permission, camera unavailable, capture failure and device rotation.
+
+9. Gallery / Image Import
+
+Launch the system photo picker and import a selected image.
+
+Handle cancellation, unsupported file and unreadable image.
+
+10. Crop / Align Image
+
+Crop, rotate and preview the image; validate it before continuing.
+
+Preserve the previous image if cropping fails; allow Retake.
+
+11. OCR Review
+
+Extract text, display confidence or uncertain spans where supported, and let the user edit the ingredient list.
+
+Handle empty OCR, partial extraction, OCR failure and manual entry. Never silently invent missing ingredients.
+
+C. Analysis and results — screens 12–17
+Screen
+
+Real application logic
+
+Loading / error handling
+
+12. Analysis Progress
+
+Display actual job status from local processing or backend job polling/events.
+
+Show queued, processing, retryable failure and cancellation where supported.
+
+13. No relevant concerns identified
+
+Display validated findings and the scope of sources checked.
+
+If evidence coverage is incomplete, do not display an unqualified reassuring result.
+
+14. Caution
+
+Display the specific concern, evidence, applicable conditions and uncertainty.
+
+If a finding lacks sufficient evidence, label it appropriately rather than overstating risk.
+
+15. High-risk finding
+
+Display a substantiated finding, source, jurisdiction and relevant limitation.
+
+Escalate validation failures; never create a high-risk result solely from model-generated text.
+
+16. Product Details
+
+Load product metadata and connect tabs to the current product/report.
+
+Missing catalogue metadata should not block a valid label analysis.
+
+17. Ingredient Detail / Evidence
+
+Load canonical ingredient data and approved source records.
+
+Distinguish unavailable sources, unknown ingredients and genuinely absent findings.
+
+The three result types should share one implementation of a Result Screen that renders different report states. This reduces duplicate code and keeps result behavior consistent.
+
+D. History, saved items and discovery — screens 18–21
+Screen
+
+Real application logic
+
+Loading / error handling
+
+18. Scan History
+
+Retrieve paginated scans, search, filter, open reports and delete scans.
+
+Show first-load skeletons, empty history, pagination errors and Retry.
+
+19. Saved Products
+
+Load saved product/report references; save and unsave using persistent storage.
+
+Prevent duplicate saves and reconcile failed updates.
+
+20. Safety Tips
+
+Retrieve curated educational content with source attribution and content versioning.
+
+Show cached content if valid; otherwise display a retryable error.
+
+21. Notifications
+
+Retrieve and mark notifications read, if the feature exists.
+
+Handle expired sessions, pagination and notification permission separately from notification data.
+
+E. Profile and settings — screens 22–27
+Screen
+
+Real application logic
+
+Loading / error handling
+
+22. Profile
+
+Load account and subscription summary.
+
+Show a recoverable state if account information is unavailable.
+
+23. Personal Preferences
+
+Read and save user-selected preferences.
+
+Keep unsaved changes local; show save success or failure.
+
+24. Allergens / Dietary Preferences
+
+Persist preferences and apply them as a separate analysis dimension.
+
+Validate selections and avoid presenting preference mismatches as confirmed toxicity.
+
+25. Premium Plans
+
+Load available plans and display actual pricing and terms.
+
+Handle store unavailable, pending purchase, cancellation and restore failures.
+
+26. Privacy / Export / Delete
+
+Explain retention, request export, confirm deletion and track request status.
+
+Never show deletion as complete until the backend confirms the required operation.
+
+27. General Settings
+
+Save theme, language and notification preferences where supported.
+
+Roll back optimistic changes if persistence fails.
+
+F. Support and recovery — screens 28–32
+Screen
+
+Real application logic
+
+Loading / error handling
+
+28. Help and Support
+
+Open help articles, FAQs or support contact.
+
+Provide a fallback contact route if the help service is unavailable.
+
+29. Report an Issue
+
+Submit scan/report ID, issue category and user description.
+
+Validate input, prevent duplicate submissions and show a reference ID on success.
+
+30. Permission Recovery
+
+Explain why a permission is needed and offer the relevant Settings route when appropriate.
+
+Never loop endlessly through permission prompts.
+
+31. Offline / Error / Retry
+
+Display a reusable error state with an appropriate retry or fallback action.
+
+Retry only retryable operations; preserve drafts and use bounded backoff.
+
+32. Empty / Loading / Unmatched States
+
+Render shared skeleton, empty, partial, unknown and failure components.
+
+Use the correct state for the actual data; do not confuse empty results with a failed request.
+
+4. Define the states every asynchronous operation must support
+Do not implement a loading spinner as the entire error-handling strategy. Each network or processing operation should have a predictable state model.
+
+Idle
+
+No request currently running
+
+Loading / Processing
+
+Progress, disabled duplicate actions, cancellation if supported
+
+Success
+
+Show valid data
+
+Failure
+
+Explain and recover
+
+Empty / Partial / Offline
+
+Explicit alternative states; never pretend the request succeeded
+
+For long-running scan jobs, add specific states:
+
+created → uploading → extracting → awaiting_confirmation → queued → analyzing → validating → completed
+
+Failure states should be explicit, for example upload_failed, ocr_failed, analysis_failed, evidence_unavailable or cancelled. A failure should not be represented as completed.
+
+A timeout is also not proof that a request failed on the server: the operation may still be running. Use a stable scan/job ID and retrieve the existing status instead of blindly submitting a duplicate job.
+
+5. Backend and API logic
+The Android application must not directly access the production database or contain privileged AI-provider credentials. Use authenticated backend APIs for user data and analysis orchestration.
+
+These are proposed endpoint contracts; adapt them to your existing implementation after auditing the repository.
+
+Endpoint
+
+Purpose
+
+POST /v1/scans
+
+Create a scan record and return a stable scan ID.
+
+POST /v1/scans/{id}/images
+
+Upload or register a validated image.
+
+POST /v1/scans/{id}/extract
+
+Request OCR extraction if it is performed server-side.
+
+PUT /v1/scans/{id}/ingredients
+
+Save the user-confirmed ingredient text.
+
+POST /v1/scans/{id}/analyze
+
+Queue analysis and return job/report status.
+
+GET /v1/scans/{id}/status
+
+Retrieve the current processing state.
+
+GET /v1/scans/{id}/report
+
+Retrieve the validated report.
+
+GET /v1/scans
+
+Retrieve the authenticated user's paginated history.
+
+DELETE /v1/scans/{id}
+
+Delete a scan subject to the documented retention policy.
+
+GET /v1/ingredients/{id}
+
+Retrieve canonical ingredient information and approved evidence.
+
+PUT /v1/users/me/preferences
+
+Save authenticated user preferences.
+
+POST /v1/feedback
+
+Submit a report or issue for review.
+
+Example: submit an analysis job
+The server should validate scan ownership, confirmed ingredient input and quota, then create or return the existing job for an idempotent request.
+
+Illustrative response:
+
+{
+  "scan_id": "scn_example",
+  "job_id": "job_example",
+  "status": "queued",
+  "status_url": "/v1/scans/scn_example/status"
+}
+
+The Android app then observes the status using polling with backoff or a supported event channel. When the job completes, it fetches the validated report.
+
+Important application rules:
+
+Every endpoint verifies the user's access to the requested resource.
+
+Rate limits and quotas are enforced server-side.
+
+Retries use idempotency where needed.
+
+Images use private storage and validated uploads.
+
+AI-generated text is validated against approved evidence and deterministic findings.
+
+Missing evidence, OCR errors and model timeouts remain explicit failures or incomplete states.
+
+The backend stores report versions, evidence references and applicable rule versions.
+
+6. Android implementation structure
+If your existing app uses Kotlin and Jetpack Compose, a maintainable implementation can follow this structure:
+
+app/
+├── core/
+│   ├── network/
+│   ├── database/
+│   ├── auth/
+│   ├── security/
+│   └── ui/
+├── feature/
+│   ├── onboarding/
+│   ├── home/
+│   ├── search/
+│   ├── scanner/
+│   ├── ocr-review/
+│   ├── analysis/
+│   ├── results/
+│   ├── history/
+│   ├── saved/
+│   ├── preferences/
+│   ├── subscription/
+│   └── profile/
+├── data/
+│   ├── repository/
+│   ├── remote/
+│   └── local/
+└── navigation/
+Use the MVVM pattern: Compose renders the state, the ViewModel handles screen events and coordinates use cases, repositories manage data access, and the backend remains authoritative for user permissions, analysis reports and billing.
+
+Example screen state
+sealed interface ScanUiState {
+    data object Idle : ScanUiState
+    data object Uploading : ScanUiState
+    data object Extracting : ScanUiState
+    data object AwaitingReview : ScanUiState
+    data object Analyzing : ScanUiState
+
+    data class Success(
+        val reportId: String
+    ) : ScanUiState
+
+    data class Error(
+        val message: String,
+        val retryable: Boolean
+    ) : ScanUiState
+}
+
+This is a starting example, not complete production code. In the real implementation, model queued jobs, cancellation, offline recovery, partial results and individual failure categories explicitly. Avoid placing secrets, raw exception details or sensitive ingredient data in user-facing error messages or logs.
+
+7. Critical error scenarios and required behavior
+These are the failure paths I would test before release.
+
+Scenario
+
+Required application behavior
+
+Camera permission denied
+
+Explain why it is needed; offer gallery or manual entry.
+
+Blurry image
+
+Ask the user to retake or crop; do not continue with fabricated text.
+
+OCR returns partial text
+
+Highlight uncertain content where possible and request correction.
+
+No ingredient match
+
+Display the original text as unmatched; offer editing or lookup.
+
+Network disconnects during upload
+
+Preserve the scan draft and resume or retry safely.
+
+Server times out during analysis
+
+Check the existing job status before resubmitting.
+
+Evidence source is unavailable
+
+Mark the report incomplete or evidence unavailable.
+
+AI returns invalid or unsupported content
+
+Reject the output and use a validated fallback or report failure.
+
+Subscription verification fails
+
+Do not grant unverified premium entitlements.
+
+Another user requests a report
+
+Return an authorization error without exposing the report.
+
+Database or queue becomes overloaded
+
+Apply backpressure, return a controlled response and recover without losing accepted jobs.
+
+User deletes their account
+
+Revoke access and execute the documented deletion and retention process.
+
+8. Testing strategy
+Before release, test the complete user journey rather than testing screens individually.
+
+Unit tests: Input validation, ingredient normalization, state transitions and business rules.
+
+Integration tests: API, authentication, database, storage and job processing.
+
+Android UI tests: Navigation, buttons, forms, camera permission, loading states and recovery.
+
+End-to-end tests: Capture label → correct OCR → analyze → inspect evidence → save → reopen history.
+
+Security tests: Resource ownership, authentication, quotas, upload validation and sensitive-data exposure.
+
+Performance tests: API traffic, simultaneous scan submissions, queue growth and recovery under the agreed 10,000-user workload.
+
+Regression tests: Confirm that changes to one screen or shared component do not break other flows.
+
+For ingredient analysis, maintain a reviewed test dataset containing clear labels, blurry images, spelling variants, unknown ingredients, conflicting evidence and incomplete ingredient lists. Measure extraction and matching accuracy separately from the correctness of the final findings.
+
+9. Master implementation prompt
+Use this prompt in your coding agent with the actual ScanSafe.AI source repository and existing documentation.
+
+Implement the complete ScanSafe.AI Android application flow and production application logic using the existing project and approved UI/UX design.
+
+First inspect the repository and identify the actual Android framework, backend, database, authentication, OCR, AI integration and navigation implementation. Do not create a separate prototype or blindly rewrite working code.
+
+Implement all 32 defined screens and reusable states according to the existing product specification. Connect every interactive element to real application logic, including camera capture, gallery import, image cropping, OCR extraction, ingredient correction, analysis jobs, result rendering, product details, history, saved items, preferences, account settings, support and privacy operations.
+
+For every asynchronous operation, implement appropriate loading, success, empty, partial, offline, error and retryable states. Prevent duplicate submissions, preserve recoverable drafts, handle lifecycle changes and process interruptions, and use bounded retries and idempotency for operations that may be repeated.
+
+Use a maintainable architecture with UI state management, ViewModels, repositories, typed API models and testable business logic. Keep authentication, authorization, quotas, subscriptions, evidence approval and final analysis validation under appropriate server-side control.
+
+For ingredient analysis, preserve raw OCR text, allow user correction, distinguish unmatched ingredients from validated findings, retrieve approved evidence, apply deterministic rules and reject unsupported AI-generated claims. Never convert technical failures or missing evidence into a safety conclusion.
+
+Add unit, integration, UI, end-to-end, security and load tests. Create a screen-by-screen implementation checklist and report actual test results. Validate the system against the agreed 10,000-concurrent-user workload before making capacity claims.
+
+Preserve the existing design palette, typography, hand-drawn illustration direction and accessibility requirements. Do not use hard-coded demo responses in production paths. Work incrementally, document changed files, identify blockers honestly and do not mark a feature complete until its acceptance tests pass.
+
+Recommended next step: Implement the scan workflow first, from Camera Scanner through the final validated Result Screen. It is the central feature of ScanSafe.AI; once its data flow, error handling and evidence logic are reliable, connect History, Saved Products, Preferences and the remaining screens to the same real backend.
