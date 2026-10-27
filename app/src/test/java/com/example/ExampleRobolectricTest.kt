@@ -208,6 +208,86 @@ class ExampleRobolectricTest {
         val relaunchedVm = ScanViewModel(app)
         assertEquals(false, relaunchedVm.uiState.value.hapticsEnabled)
     }
+
+    @Test
+    fun `room schema stores scan history verdicts and user defined allergen profiles`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = AppDatabase.createInMemory(context)
+        val repo = ScanRepository(db)
+
+        db.preferenceDao().insertPreferences(
+            listOf(
+                com.example.data.local.PreferenceSettingEntity(
+                    key = "pref_gluten",
+                    label = "Gluten / Wheat Derivatives",
+                    description = "Flag wheat",
+                    category = "allergen",
+                    isEnabled = false
+                ),
+                com.example.data.local.PreferenceSettingEntity(
+                    key = "pref_tree_nuts",
+                    label = "Tree Nut & Peanut Allergens",
+                    description = "Flag almond and peanut",
+                    category = "allergen",
+                    isEnabled = false
+                )
+            )
+        )
+
+        val createdProfile = repo.saveUserAllergenProfile(
+            profileName = "Strict Nut & Gluten Profile",
+            description = "Flags tree nuts, gluten, and methylparaben",
+            enabledPreferenceKeys = listOf("pref_gluten", "pref_tree_nuts"),
+            customTriggers = listOf("Methylparaben"),
+            defaultSeverity = "HIGH_RISK",
+            activateImmediately = true
+        )
+
+        val activeProfile = db.allergenProfileDao().getActiveProfileSync()
+        assertNotNull(activeProfile)
+        assertEquals("Strict Nut & Gluten Profile", activeProfile!!.profileName)
+        assertEquals(createdProfile.id, activeProfile.id)
+
+        val syncedPrefs = repo.getPreferencesList()
+        assertTrue(syncedPrefs.first { it.key == "pref_gluten" }.isEnabled)
+        assertTrue(syncedPrefs.first { it.key == "pref_tree_nuts" }.isEnabled)
+        val activeCustom = db.customAllergenDao().getActiveCustomAllergens()
+        assertTrue(activeCustom.any { it.name.equals("Methylparaben", ignoreCase = true) })
+
+        val unsafeReport = repo.processAndSaveScan(
+            productTitle = "Almond & Wheat Hair Mask",
+            category = "Hair Care",
+            region = "US",
+            rawOcrText = "Water, Hydrolyzed Wheat Protein, Sweet Almond Oil, Methylparaben",
+            correctedText = "Water, Hydrolyzed Wheat Protein, Sweet Almond Oil, Methylparaben"
+        )
+
+        val storedScan = db.scanDao().getScanById(unsafeReport.scanId)
+        assertNotNull(storedScan)
+        assertEquals(com.example.data.local.ScanStatus.COMPLETED.name, storedScan!!.scanStatus)
+        assertEquals(com.example.data.local.SafetyVerdict.UNSAFE_MATCH.name, storedScan.safetyVerdict)
+        assertEquals("HIGH_RISK", storedScan.safetyTier)
+
+        db.close()
+    }
+
+    @Test
+    fun `camerax capture state transitions handle start error and recovery deterministically`() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val vm = ScanViewModel(app)
+
+        vm.onCaptureStarted()
+        assertEquals(com.example.data.local.ScanStatus.CAPTURING, vm.uiState.value.captureStatus)
+        assertEquals(null, vm.uiState.value.captureErrorMessage)
+
+        vm.onCaptureFailed("Camera sensor timeout")
+        assertEquals(com.example.data.local.ScanStatus.FAILED, vm.uiState.value.captureStatus)
+        assertEquals("Camera sensor timeout", vm.uiState.value.captureErrorMessage)
+
+        vm.clearCaptureError()
+        assertEquals(com.example.data.local.ScanStatus.PENDING, vm.uiState.value.captureStatus)
+        assertEquals(null, vm.uiState.value.captureErrorMessage)
+    }
 }
 
 

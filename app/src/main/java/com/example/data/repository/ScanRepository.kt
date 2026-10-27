@@ -4,12 +4,15 @@ import com.example.data.api.GeminiIngredientInsight
 import com.example.data.api.GeminiService
 import com.example.data.catalog.EvidenceEngine
 import com.example.data.catalog.IngredientCatalog
+import com.example.data.local.AllergenProfileEntity
 import com.example.data.local.AppDatabase
 import com.example.data.local.CustomAllergenEntity
 import com.example.data.local.ExtractedIngredientEntity
 import com.example.data.local.FindingEntity
 import com.example.data.local.PreferenceSettingEntity
+import com.example.data.local.SafetyVerdict
 import com.example.data.local.ScanEntity
+import com.example.data.local.ScanStatus
 import com.example.data.local.UserAccountEntity
 import com.example.data.model.FindingType
 import com.example.data.model.MatchStatus
@@ -30,11 +33,14 @@ class ScanRepository(private val db: AppDatabase) {
     private val userAccountDao = db.userAccountDao()
     private val preferenceDao = db.preferenceDao()
     private val customAllergenDao = db.customAllergenDao()
+    private val allergenProfileDao = db.allergenProfileDao()
 
     val allScans: Flow<List<ScanEntity>> = scanDao.getAllScans()
     val savedScans: Flow<List<ScanEntity>> = scanDao.getSavedScans()
     val allPreferences: Flow<List<PreferenceSettingEntity>> = preferenceDao.getAllPreferences()
     val allCustomAllergens: Flow<List<CustomAllergenEntity>> = customAllergenDao.getAllCustomAllergens()
+    val allAllergenProfiles: Flow<List<AllergenProfileEntity>> = allergenProfileDao.getAllProfiles()
+    val activeAllergenProfile: Flow<AllergenProfileEntity?> = allergenProfileDao.getActiveProfile()
 
     suspend fun getPreferencesList(): List<PreferenceSettingEntity> {
         return preferenceDao.getPreferencesList()
@@ -44,7 +50,19 @@ class ScanRepository(private val db: AppDatabase) {
         preferenceDao.setPreferenceEnabled(key, isEnabled)
     }
 
-    suspend fun addCustomAllergen(name: String, severityLevel: String = "HIGH_RISK") {
+    suspend fun updatePreferenceRuleDetails(
+        key: String,
+        ruleClassification: String,
+        userReasonNote: String
+    ) {
+        preferenceDao.updatePreferenceRuleDetails(key, ruleClassification, userReasonNote)
+    }
+
+    suspend fun addCustomAllergen(
+        name: String,
+        severityLevel: String = "HIGH_RISK",
+        ruleClassification: String = "MEDICAL_ALLERGY"
+    ) {
         val trimmed = name.trim()
         if (trimmed.isNotBlank()) {
             customAllergenDao.insertCustomAllergen(
@@ -53,6 +71,7 @@ class ScanRepository(private val db: AppDatabase) {
                     name = trimmed,
                     isEnabled = true,
                     severityLevel = severityLevel,
+                    ruleClassification = ruleClassification,
                     createdAt = System.currentTimeMillis()
                 )
             )
@@ -68,7 +87,99 @@ class ScanRepository(private val db: AppDatabase) {
     }
 
     suspend fun updateCustomAllergenSeverity(id: String, severityLevel: String) {
-        customAllergenDao.updateAllergenSeverity(id, severityLevel)
+        val ruleClass = if (severityLevel.equals("HIGH_RISK", ignoreCase = true)) {
+            "MEDICAL_ALLERGY"
+        } else {
+            "PERSONAL_SENSITIVITY"
+        }
+        customAllergenDao.updateCustomAllergenDetails(
+            id = id,
+            ruleClassification = ruleClass,
+            severityLevel = severityLevel,
+            reasonNote = ""
+        )
+    }
+
+    suspend fun updateCustomAllergenDetails(
+        id: String,
+        severityLevel: String,
+        ruleClassification: String,
+        reasonNote: String = ""
+    ) {
+        customAllergenDao.updateCustomAllergenDetails(
+            id = id,
+            ruleClassification = ruleClassification,
+            severityLevel = severityLevel,
+            reasonNote = reasonNote
+        )
+    }
+
+    suspend fun saveUserAllergenProfile(
+        profileName: String,
+        description: String,
+        enabledPreferenceKeys: List<String>,
+        customTriggers: List<String>,
+        defaultSeverity: String = "HIGH_RISK",
+        activateImmediately: Boolean = true
+    ): AllergenProfileEntity {
+        val now = System.currentTimeMillis()
+        val profile = AllergenProfileEntity(
+            id = UUID.randomUUID().toString(),
+            profileName = profileName.trim().ifBlank { "Custom Allergen Profile" },
+            description = description.trim().ifBlank { "User-defined personal allergen profile" },
+            enabledPreferenceKeysJson = JSONArray(enabledPreferenceKeys).toString(),
+            customTriggersJson = JSONArray(customTriggers).toString(),
+            defaultSeverity = defaultSeverity,
+            isActive = activateImmediately,
+            createdAt = now,
+            updatedAt = now
+        )
+        if (activateImmediately) {
+            allergenProfileDao.deactivateAllProfiles()
+        }
+        allergenProfileDao.insertProfile(profile)
+        if (activateImmediately) {
+            applyAllergenProfileRules(profile)
+        }
+        return profile
+    }
+
+    suspend fun activateAllergenProfile(profileId: String) {
+        val profile = allergenProfileDao.getProfileById(profileId) ?: return
+        allergenProfileDao.setActiveProfile(profileId)
+        applyAllergenProfileRules(profile)
+    }
+
+    suspend fun deleteAllergenProfile(profileId: String) {
+        allergenProfileDao.deleteProfile(profileId)
+    }
+
+    private suspend fun applyAllergenProfileRules(profile: AllergenProfileEntity) {
+        val enabledKeys = parseJsonStringArray(profile.enabledPreferenceKeysJson).toSet()
+        val allPrefs = preferenceDao.getPreferencesList()
+        allPrefs.forEach { pref ->
+            val shouldEnable = enabledKeys.contains(pref.key)
+            if (pref.isEnabled != shouldEnable) {
+                preferenceDao.setPreferenceEnabled(pref.key, shouldEnable)
+            }
+        }
+        val triggers = parseJsonStringArray(profile.customTriggersJson)
+        val existingCustom = customAllergenDao.getAllCustomAllergensList()
+        triggers.forEach { triggerName ->
+            val match = existingCustom.firstOrNull { it.name.equals(triggerName, ignoreCase = true) }
+            if (match == null) {
+                customAllergenDao.insertCustomAllergen(
+                    CustomAllergenEntity(
+                        id = UUID.randomUUID().toString(),
+                        name = triggerName,
+                        isEnabled = true,
+                        severityLevel = profile.defaultSeverity
+                    )
+                )
+            } else if (!match.isEnabled) {
+                customAllergenDao.toggleCustomAllergen(match.id, true)
+            }
+        }
     }
 
     suspend fun toggleSaved(scanId: String, currentSaved: Boolean) {
@@ -190,32 +301,32 @@ class ScanRepository(private val db: AppDatabase) {
 
         activeCustomAllergens.forEach { custom ->
             allAllergens.add(custom.name)
-            if (custom.severityLevel.equals("HIGH_RISK", ignoreCase = true)) {
+            if (custom.severityLevel.equals("HIGH_RISK", ignoreCase = true) ||
+                custom.ruleClassification.equals("MEDICAL_ALLERGY", ignoreCase = true)
+            ) {
                 highRiskAllergens.add(custom.name)
             }
         }
 
         activePrefs.forEach { pref ->
             if (pref.isEnabled) {
-                when (pref.key) {
-                    "pref_fragrance_free" -> allAllergens.add("Fragrance / Parfum")
-                    "pref_sulfate_free" -> allAllergens.add("Sulfates (SLS / SLES)")
-                    "pref_paraben_free" -> allAllergens.add("Parabens")
-                    "pref_silicone_free" -> allAllergens.add("Silicones")
-                    "pref_pregnancy_caution" -> {
-                        allAllergens.add("Pregnancy Caution (Retinoids / BHA)")
-                        highRiskAllergens.add("Pregnancy Caution (Retinoids / BHA)")
-                    }
-                    "pref_tree_nuts" -> {
-                        allAllergens.add("Tree Nuts & Peanuts")
-                        highRiskAllergens.add("Tree Nuts & Peanuts")
-                    }
-                    "pref_gluten" -> {
-                        allAllergens.add("Gluten & Wheat")
-                        highRiskAllergens.add("Gluten & Wheat")
-                    }
-                    "pref_essential_oils" -> allAllergens.add("Essential Oils")
-                    "pref_soy" -> allAllergens.add("Soy & Legumes")
+                val label = when (pref.key) {
+                    "pref_fragrance_free" -> "Fragrance / Parfum"
+                    "pref_sulfate_free" -> "Sulfates (SLS / SLES)"
+                    "pref_paraben_free" -> "Parabens"
+                    "pref_silicone_free" -> "Silicones"
+                    "pref_pregnancy_caution" -> "Pregnancy Caution (Retinoids / BHA)"
+                    "pref_tree_nuts" -> "Tree Nuts & Peanuts"
+                    "pref_gluten" -> "Gluten & Wheat"
+                    "pref_essential_oils" -> "Essential Oils"
+                    "pref_soy" -> "Soy & Legumes"
+                    else -> pref.label
+                }
+                allAllergens.add(label)
+                if (pref.ruleClassification.equals("MEDICAL_ALLERGY", ignoreCase = true) ||
+                    pref.key in setOf("pref_pregnancy_caution", "pref_tree_nuts", "pref_gluten")
+                ) {
+                    highRiskAllergens.add(label)
                 }
             }
         }
@@ -226,7 +337,8 @@ class ScanRepository(private val db: AppDatabase) {
     suspend fun processAndSaveImageScan(
         bitmap: android.graphics.Bitmap,
         region: String,
-        batchId: String? = null
+        batchId: String? = null,
+        languageCode: String = "en"
     ): ScanReport {
         val activePrefs = getPreferencesList()
         val activeCustom = customAllergenDao.getActiveCustomAllergens()
@@ -236,7 +348,8 @@ class ScanRepository(private val db: AppDatabase) {
             bitmap = bitmap,
             region = region,
             userAllergens = userAllergens,
-            highRiskAllergens = highRiskAllergens
+            highRiskAllergens = highRiskAllergens,
+            languageCode = languageCode
         )
 
         val report = EvidenceEngine.analyzeIngredients(
@@ -261,11 +374,11 @@ class ScanRepository(private val db: AppDatabase) {
         region: String,
         rawOcrText: String,
         correctedText: String,
-        batchId: String? = null
+        batchId: String? = null,
+        languageCode: String = "en"
     ): ScanReport {
         val activePrefs = getPreferencesList()
         val activeCustom = customAllergenDao.getActiveCustomAllergens()
-        val (userAllergens, highRiskAllergens) = getCombinedUserAllergens()
 
         val report = EvidenceEngine.analyzeIngredients(
             productTitle = productTitle,
@@ -277,17 +390,36 @@ class ScanRepository(private val db: AppDatabase) {
             customAllergens = activeCustom
         )
 
-        val rawInsight = GeminiService.analyzeIngredients(
-            ingredientsText = correctedText.ifBlank { rawOcrText },
+        val rawInsight = GeminiService.analyzeCameraXTextWithProfile(
+            cameraXExtractedText = correctedText.ifBlank { rawOcrText },
             category = category,
             region = region,
-            userAllergens = userAllergens,
-            highRiskAllergens = highRiskAllergens
+            preferences = activePrefs,
+            customAllergens = activeCustom,
+            languageCode = languageCode
         )
         val geminiInsight = mergeDeterministicAllergenVerdict(report, rawInsight)
 
         persistReportToDb(report, geminiInsight, batchId = batchId)
         return report.copy(geminiInsight = geminiInsight)
+    }
+
+    suspend fun analyzeCameraXTextWithUserProfile(
+        cameraXText: String,
+        category: String = "Skin Care",
+        region: String = "US & EU",
+        languageCode: String = "en"
+    ): GeminiIngredientInsight {
+        val activePrefs = getPreferencesList()
+        val activeCustom = customAllergenDao.getActiveCustomAllergens()
+        return GeminiService.analyzeCameraXTextWithProfile(
+            cameraXExtractedText = cameraXText,
+            category = category,
+            region = region,
+            preferences = activePrefs,
+            customAllergens = activeCustom,
+            languageCode = languageCode
+        )
     }
 
     private fun mergeDeterministicAllergenVerdict(
@@ -395,14 +527,32 @@ class ScanRepository(private val db: AppDatabase) {
     suspend fun persistReportToDb(
         report: ScanReport,
         geminiInsight: GeminiIngredientInsight,
-        batchId: String? = null
+        batchId: String? = null,
+        isSyntheticDemo: Boolean = false
     ) {
+        val resolvedStatus = if (report.correctedText.isBlank() && report.rawOcrText.isBlank()) {
+            ScanStatus.INCONCLUSIVE
+        } else {
+            ScanStatus.COMPLETED
+        }
+
+        val resolvedVerdict = when {
+            resolvedStatus != ScanStatus.COMPLETED -> SafetyVerdict.UNKNOWN
+            geminiInsight.safetyTier.equals("HIGH_RISK", ignoreCase = true) ||
+                report.preferenceNotes.any { it.severity == Severity.CRITICAL } -> SafetyVerdict.UNSAFE_MATCH
+            geminiInsight.safetyTier.equals("WARNING", ignoreCase = true) ||
+                report.preferenceNotes.isNotEmpty() -> SafetyVerdict.WARNING
+            geminiInsight.safetyTier.equals("SAFE", ignoreCase = true) &&
+                report.ingredients.isNotEmpty() -> SafetyVerdict.SAFE_WITH_RESPECT_TO_CHECKED_RULES
+            else -> SafetyVerdict.UNKNOWN
+        }
+
         val scanEntity = ScanEntity(
             id = report.scanId,
             title = report.productTitle,
             category = report.category,
             regionCode = report.region,
-            status = "completed",
+            status = resolvedStatus.name.lowercase(),
             summaryStatus = report.summaryStatus.name,
             rawOcrText = report.rawOcrText,
             correctedText = report.correctedText,
@@ -426,7 +576,10 @@ class ScanRepository(private val db: AppDatabase) {
             saferAlternativesJson = GeminiService.serializeAlternatives(geminiInsight.saferAlternatives),
             toxicologyProfileJson = GeminiService.serializeToxicology(geminiInsight.toxicologyProfile),
             groundingCitationsJson = GeminiService.serializeCitations(geminiInsight.groundingCitations),
-            batchId = batchId
+            batchId = batchId,
+            scanStatus = resolvedStatus.name,
+            safetyVerdict = resolvedVerdict.name,
+            isSyntheticDemo = isSyntheticDemo
         )
         scanDao.insertScan(scanEntity)
 

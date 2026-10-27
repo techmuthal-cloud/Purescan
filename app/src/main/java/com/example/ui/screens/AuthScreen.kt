@@ -1,12 +1,11 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -28,13 +26,9 @@ import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Science
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -61,11 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -78,7 +68,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.ui.ScanViewModel
 import com.example.ui.Screen
 import com.example.ui.theme.BoneLight
@@ -94,13 +83,15 @@ import com.example.ui.theme.SemanticCriticalBg
 import com.example.ui.theme.SmokyBlack
 import com.example.ui.theme.SurfaceCream
 import com.example.ui.theme.ThemeMode
+import com.example.ui.util.AppLocalization
 
 /**
- * Minimalist Editorial Authentication Screen
- * Features a single, cohesive editorial-style card containing:
- * 1. The PureScan icon (R.drawable.ic_purescan_logo) + serif brand header & tagline
- * 2. The four brand pillars ("Safer Products", "Clear Ingredients", "Trusted Information", "Healthier You")
- * 3. Clean authentication controls and the primary ScanOrange call-to-action button
+ * Clean, Clutter-Free Editorial Authentication Screen (Refactored per P0 UX Review):
+ * - Removes promotional benefit chips and competing one-tap demo profile cards.
+ * - Defaults to a dedicated Sign In view with email/password fields and primary Sign In CTA.
+ * - Provides a prominent "Continue with Google" button.
+ * - Features a clear bottom Account Creation path ("Don't have an account? Create Account")
+ *   that transitions smoothly into the registration form.
  */
 @Composable
 fun AuthScreen(viewModel: ScanViewModel) {
@@ -112,59 +103,135 @@ fun AuthScreen(viewModel: ScanViewModel) {
     var passwordVisible by remember { mutableStateOf(false) }
     var showGoogleAccountDialog by remember { mutableStateOf(false) }
     var showThemeSelectorDialog by remember { mutableStateOf(false) }
+    var showPasswordResetDialog by remember { mutableStateOf(false) }
+    var resetEmail by remember { mutableStateOf("") }
     var googleCustomEmail by remember { mutableStateOf("techmuthal@gmail.com") }
     var googleCustomName by remember { mutableStateOf("Priya Sharma") }
 
     val borderStrokeWidth = if (uiState.outdoorMode) 2.dp else 1.dp
+
+    if (uiState.showLanguageDialog) {
+        com.example.ui.components.LanguageSelectorDialog(
+            selectedLanguage = uiState.selectedLanguage,
+            onSelectLanguage = { viewModel.setAppLanguage(it) },
+            onDismiss = { viewModel.setShowLanguageDialog(false) }
+        )
+    }
+
+    if (showPasswordResetDialog) {
+        AlertDialog(
+            onDismissRequest = { showPasswordResetDialog = false },
+            containerColor = FloralWhite,
+            title = {
+                Text(
+                    text = "Reset Password",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = SmokyBlack
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Enter the email address associated with your PureScan account to reset your password.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OliveDrab
+                    )
+                    OutlinedTextField(
+                        value = resetEmail,
+                        onValueChange = { resetEmail = it },
+                        label = { Text("Email Address") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("auth_reset_email_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = resetEmail.trim()
+                        if (target.isBlank() || !target.contains("@")) {
+                            viewModel.showToast("Please enter a valid email address for password recovery")
+                        } else {
+                            showPasswordResetDialog = false
+                            viewModel.showToast("Password recovery instructions sent to $target")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ScanOrange, contentColor = OnScanOrange),
+                    modifier = Modifier.testTag("auth_confirm_reset_button")
+                ) {
+                    Text("Send Recovery")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPasswordResetDialog = false }) {
+                    Text("Cancel", color = SmokyBlack)
+                }
+            }
+        )
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(FloralWhite)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 16.dp)
+            .padding(horizontal = 24.dp, vertical = 18.dp)
             .testTag("auth_screen"),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Minimalist Top Row: Theme button & Skip/Guest
+        // Minimalist Top Utility Bar: Language Selector, Theme Toggle & Continue as Guest
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            IconButton(
-                onClick = { showThemeSelectorDialog = true },
-                modifier = Modifier
-                    .size(40.dp)
-                    .testTag("auth_theme_toggle_button")
-            ) {
-                Icon(
-                    imageVector = when (uiState.themeMode) {
-                        ThemeMode.DARK -> Icons.Default.DarkMode
-                        ThemeMode.LIGHT -> Icons.Default.LightMode
-                        ThemeMode.SYSTEM -> Icons.Default.BrightnessAuto
-                    },
-                    contentDescription = "Theme (${uiState.themeMode.label})",
-                    tint = if (uiState.outdoorMode) ScanOrange else OliveDrab
-                )
-            }
+            com.example.ui.components.LanguageSelectorPill(
+                selectedLanguage = uiState.selectedLanguage,
+                onClick = { viewModel.setShowLanguageDialog(true) }
+            )
 
-            TextButton(
-                onClick = { viewModel.navigateTo(Screen.Home) },
-                modifier = Modifier.testTag("auth_skip_guest_button")
-            ) {
-                Text(
-                    text = "Skip",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        color = SmokyBlack,
-                        fontWeight = FontWeight.Medium
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = { showThemeSelectorDialog = true },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("auth_theme_toggle_button")
+                ) {
+                    Icon(
+                        imageVector = when (uiState.themeMode) {
+                            ThemeMode.DARK -> Icons.Default.DarkMode
+                            ThemeMode.LIGHT -> Icons.Default.LightMode
+                            ThemeMode.SYSTEM -> Icons.Default.BrightnessAuto
+                        },
+                        contentDescription = "Theme (${uiState.themeMode.label})",
+                        tint = if (uiState.outdoorMode) ScanOrange else OliveDrab
                     )
-                )
+                }
+
+                TextButton(
+                    onClick = { viewModel.navigateTo(Screen.Home) },
+                    modifier = Modifier.testTag("auth_skip_guest_button")
+                ) {
+                    Text(
+                        text = "Continue as Guest",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            color = OliveDrab,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    )
+                }
             }
         }
 
-        // Single Cohesive Editorial Card containing PureScan Icon, 4 Brand Pillars, and Primary Orange CTA
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Dedicated Authentication Card: Logo + 1 concise value proposition + isolated Sign-In / Google / Create Account
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
@@ -177,16 +244,16 @@ fun AuthScreen(viewModel: ScanViewModel) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 22.dp),
+                    .padding(horizontal = 22.dp, vertical = 26.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // 1. Purescan 3D Glossy Checkmark-Leaf Emblem & PURESCAN Wordmark Header
+                // 1. Brand Emblem & Wordmark
                 com.example.ui.components.Purescan3DEmblem(
-                    size = 76.dp,
-                    cornerRadius = 20.dp
+                    size = 68.dp,
+                    cornerRadius = 18.dp
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
                     text = buildAnnotatedString {
@@ -200,7 +267,7 @@ fun AuthScreen(viewModel: ScanViewModel) {
                     style = MaterialTheme.typography.headlineLarge.copy(
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 31.sp,
+                        fontSize = 28.sp,
                         letterSpacing = 1.2.sp
                     ),
                     textAlign = TextAlign.Center
@@ -208,124 +275,65 @@ fun AuthScreen(viewModel: ScanViewModel) {
 
                 Spacer(modifier = Modifier.height(4.dp))
 
+                // Single concise value proposition
                 Text(
-                    text = "SCAN • UNDERSTAND • CHOOSE SAFE",
+                    text = AppLocalization.authValueProposition(uiState.selectedLanguage),
                     style = MaterialTheme.typography.bodySmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        fontSize = 11.5.sp
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
                     ),
                     color = OliveDrab,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 6.dp)
                 )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 2. Four PureScan Brand Pillars in a clean 2x2 grid inside the editorial card
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        BrandPillarBadge(
-                            icon = Icons.Default.Shield,
-                            title = "Safer Products",
-                            modifier = Modifier.weight(1f)
-                        )
-                        BrandPillarBadge(
-                            icon = Icons.Default.Science,
-                            title = "Clear Ingredients",
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        BrandPillarBadge(
-                            icon = Icons.Default.VerifiedUser,
-                            title = "Trusted Information",
-                            modifier = Modifier.weight(1f)
-                        )
-                        BrandPillarBadge(
-                            icon = Icons.Default.Favorite,
-                            title = "Healthier You",
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // Minimalist Sign In / Create Account Segmented Pill
-                Surface(
+                // Dedicated Mode Header (Sign In vs Create Account)
+                Text(
+                    text = if (isSignUp) {
+                        AppLocalization.createAccountLabel(uiState.selectedLanguage)
+                    } else {
+                        AppLocalization.signInLabel(uiState.selectedLanguage)
+                    },
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontFamily = FontFamily.Serif,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 21.sp
+                    ),
+                    color = SmokyBlack,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp))
-                        .border(1.dp, CardBorder, RoundedCornerShape(24.dp)),
-                    color = SurfaceCream
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(3.dp)
-                    ) {
-                        Surface(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(20.dp))
-                                .clickable {
-                                    isSignUp = false
-                                    viewModel.clearAuthError()
-                                }
-                                .testTag("auth_tab_sign_in"),
-                            color = if (!isSignUp) ScanOrange else Color.Transparent
-                        ) {
-                            Text(
-                                text = "Sign In",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = if (!isSignUp) OnScanOrange else SmokyBlack,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(vertical = 9.dp)
-                            )
-                        }
+                        .testTag("auth_mode_header"),
+                    textAlign = TextAlign.Start
+                )
 
-                        Surface(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(20.dp))
-                                .clickable {
-                                    isSignUp = true
-                                    viewModel.clearAuthError()
-                                }
-                                .testTag("auth_tab_sign_up"),
-                            color = if (isSignUp) ScanOrange else Color.Transparent
-                        ) {
-                            Text(
-                                text = "Create Account",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isSignUp) OnScanOrange else SmokyBlack,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(vertical = 9.dp)
-                            )
-                        }
-                    }
-                }
+                Spacer(modifier = Modifier.height(4.dp))
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = if (isSignUp) {
+                        "Create a profile to save your personal allergy rules and scan history."
+                    } else {
+                        "Sign in with your email or Google account to access your saved rules."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OliveDrabMuted,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Start
+                )
 
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Action-triggered error banner
                 if (uiState.authErrorMessage != null) {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 8.dp)
-                            .border(1.dp, SemanticCritical.copy(alpha = 0.4f), RoundedCornerShape(10.dp)),
-                        shape = RoundedCornerShape(10.dp),
+                            .padding(bottom = 10.dp)
+                            .border(1.dp, SemanticCritical.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                            .testTag("auth_error_banner"),
+                        shape = RoundedCornerShape(12.dp),
                         color = SemanticCriticalBg
                     ) {
                         Text(
@@ -333,11 +341,12 @@ fun AuthScreen(viewModel: ScanViewModel) {
                             style = MaterialTheme.typography.bodySmall,
                             color = SemanticCritical,
                             fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(10.dp)
+                            modifier = Modifier.padding(12.dp)
                         )
                     }
                 }
 
+                // Full Name input (only shown when creating an account)
                 AnimatedVisibility(visible = isSignUp) {
                     Column {
                         OutlinedTextField(
@@ -347,7 +356,7 @@ fun AuthScreen(viewModel: ScanViewModel) {
                                 viewModel.clearAuthError()
                             },
                             label = { Text("Full Name") },
-                            placeholder = { Text("Priya Sharma") },
+                            placeholder = { Text("Enter your name") },
                             leadingIcon = {
                                 Icon(imageVector = Icons.Default.Person, contentDescription = null, tint = OliveDrab)
                             },
@@ -370,6 +379,7 @@ fun AuthScreen(viewModel: ScanViewModel) {
                     }
                 }
 
+                // Email input
                 OutlinedTextField(
                     value = email,
                     onValueChange = {
@@ -377,7 +387,7 @@ fun AuthScreen(viewModel: ScanViewModel) {
                         viewModel.clearAuthError()
                     },
                     label = { Text("Email Address") },
-                    placeholder = { Text("name@purescan.ai") },
+                    placeholder = { Text("name@example.com") },
                     leadingIcon = {
                         Icon(imageVector = Icons.Default.Email, contentDescription = null, tint = OliveDrab)
                     },
@@ -403,6 +413,7 @@ fun AuthScreen(viewModel: ScanViewModel) {
 
                 Spacer(modifier = Modifier.height(10.dp))
 
+                // Password input
                 OutlinedTextField(
                     value = password,
                     onValueChange = {
@@ -444,24 +455,39 @@ fun AuthScreen(viewModel: ScanViewModel) {
                     shape = RoundedCornerShape(14.dp)
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 3. Primary Orange Call-To-Action Button
-                Button(
-                    onClick = {
-                        if (email.isBlank() && password.isBlank()) {
-                            viewModel.signInWithQuickProfile(
-                                fullName = "Priya Sharma",
-                                email = "priya@purescan.ai"
-                            )
-                        } else {
-                            viewModel.signInWithEmail(
-                                email = email,
-                                password = password,
-                                fullName = fullName,
-                                isSignUp = isSignUp
+                if (!isSignUp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(
+                            onClick = {
+                                resetEmail = email
+                                showPasswordResetDialog = true
+                            },
+                            modifier = Modifier.testTag("auth_forgot_password_button")
+                        ) {
+                            Text(
+                                text = "Forgot password?",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = OliveDrab
                             )
                         }
+                    }
+                } else {
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                // 2. Primary Isolated Sign-In / Create Account Action Button
+                Button(
+                    onClick = {
+                        viewModel.signInWithEmail(
+                            email = email,
+                            password = password,
+                            fullName = fullName,
+                            isSignUp = isSignUp
+                        )
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -474,10 +500,14 @@ fun AuthScreen(viewModel: ScanViewModel) {
                     )
                 ) {
                     Text(
-                        text = if (isSignUp) "Create Account" else "Get Started",
+                        text = if (isSignUp) {
+                            AppLocalization.createAccountLabel(uiState.selectedLanguage)
+                        } else {
+                            AppLocalization.signInLabel(uiState.selectedLanguage)
+                        },
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
-                            fontSize = 16.5.sp
+                            fontSize = 16.sp
                         ),
                         color = OnScanOrange
                     )
@@ -486,12 +516,13 @@ fun AuthScreen(viewModel: ScanViewModel) {
                         imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                         contentDescription = null,
                         tint = OnScanOrange,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(19.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
+                // Divider separating primary email sign-in from Google sign-in
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -505,17 +536,17 @@ fun AuthScreen(viewModel: ScanViewModel) {
                     HorizontalDivider(modifier = Modifier.weight(1f), color = CardBorder)
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Minimalist Google Sign-In & Instant Access Row
+                // 3. Prominent Google Sign-In Button
                 OutlinedButton(
                     onClick = { showGoogleAccountDialog = true },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .height(50.dp)
                         .testTag("auth_google_button"),
-                    shape = RoundedCornerShape(24.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder),
+                    shape = RoundedCornerShape(25.dp),
+                    border = BorderStroke(1.dp, CardBorder),
                     colors = ButtonDefaults.outlinedButtonColors(
                         containerColor = SurfaceCream,
                         contentColor = SmokyBlack
@@ -531,29 +562,53 @@ fun AuthScreen(viewModel: ScanViewModel) {
                     Text(
                         text = "Continue with Google",
                         style = MaterialTheme.typography.labelLarge.copy(
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
                         ),
                         color = SmokyBlack
                     )
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
-                TextButton(
-                    onClick = {
-                        viewModel.signInWithQuickProfile(
-                            fullName = "Priya Sharma",
-                            email = "priya@purescan.ai"
-                        )
-                    },
-                    modifier = Modifier.testTag("auth_quick_profile_button")
+                HorizontalDivider(color = CardBorder.copy(alpha = 0.65f))
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // 4. Dedicated Bottom Account Creation / Sign-In Switch Path
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            isSignUp = !isSignUp
+                            viewModel.clearAuthError()
+                        }
+                        .padding(vertical = 8.dp, horizontal = 8.dp)
+                        .testTag(if (isSignUp) "auth_tab_sign_in" else "auth_tab_sign_up"),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Instant One-Tap Profile Login →",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontWeight = FontWeight.SemiBold,
-                            color = OliveDrab
-                        )
+                        text = if (isSignUp) {
+                            "Already have an account? "
+                        } else {
+                            "Don't have an account? "
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OliveDrab
+                    )
+                    Text(
+                        text = if (isSignUp) {
+                            AppLocalization.signInLabel(uiState.selectedLanguage)
+                        } else {
+                            AppLocalization.createAccountLabel(uiState.selectedLanguage)
+                        },
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = ScanOrange
+                        ),
+                        modifier = Modifier.testTag("auth_switch_mode_button")
                     )
                 }
             }
@@ -568,7 +623,7 @@ fun AuthScreen(viewModel: ScanViewModel) {
             containerColor = FloralWhite,
             title = {
                 Text(
-                    text = "Choose Google Account",
+                    text = "Continue with Google",
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontFamily = FontFamily.Serif,
                         fontWeight = FontWeight.Bold
@@ -579,7 +634,7 @@ fun AuthScreen(viewModel: ScanViewModel) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Select or confirm your Google account to sign in to PureScan:",
+                        text = "Confirm your Google account details to sign in to PureScan:",
                         style = MaterialTheme.typography.bodySmall,
                         color = OliveDrab
                     )
@@ -766,51 +821,5 @@ fun AuthScreen(viewModel: ScanViewModel) {
                 }
             }
         )
-    }
-}
-
-@Composable
-private fun BrandPillarBadge(
-    icon: ImageVector,
-    title: String,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, CardBorder, RoundedCornerShape(12.dp)),
-        color = SurfaceCream
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .background(ScanOrange.copy(alpha = 0.22f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = ScanOrange,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(7.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.5.sp
-                ),
-                color = SmokyBlack,
-                maxLines = 1
-            )
-        }
     }
 }

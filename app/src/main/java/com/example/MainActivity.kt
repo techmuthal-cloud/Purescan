@@ -108,6 +108,7 @@ fun ScanSafeApp(viewModel: ScanViewModel = viewModel()) {
                 Screen.History -> HistoryScreen(viewModel = viewModel)
                 Screen.Saved -> SavedWatchlistScreen(viewModel = viewModel)
                 Screen.Preferences -> PreferencesScreen(viewModel = viewModel)
+                Screen.AllergenSettings -> com.example.ui.screens.AllergenSettingsScreen(viewModel = viewModel)
                 Screen.Profile -> ProfileScreen(viewModel = viewModel)
                 Screen.CompareProducts -> CompareProductsScreen(viewModel = viewModel)
                 Screen.Glossary -> IngredientGlossaryScreen(viewModel = viewModel)

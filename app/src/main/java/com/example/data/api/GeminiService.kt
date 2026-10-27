@@ -127,13 +127,16 @@ object GeminiService {
         bitmap: Bitmap,
         region: String,
         userAllergens: List<String> = emptyList(),
-        highRiskAllergens: List<String> = emptyList()
+        highRiskAllergens: List<String> = emptyList(),
+        languageCode: String = "en"
     ): GeminiImageExtractionResult = withContext(Dispatchers.IO) {
         val apiKey = try {
             BuildConfig.GEMINI_API_KEY
         } catch (e: Throwable) {
             ""
         }
+
+        val languageInstruction = buildLanguagePromptDirective(languageCode)
 
         val allergenDirective = if (userAllergens.isNotEmpty()) {
             """
@@ -165,6 +168,7 @@ object GeminiService {
                     7. Provide "ingredientBreakdowns" (with CAS number, dermal bioavailability note, and toxicology mechanism), "toxicologyProfile", "groundingCitations", and "saferAlternatives" (2-3 cleaner product swaps if safetyTier is WARNING or HIGH_RISK).
 
                     $allergenDirective
+                    $languageInstruction
 
                     Respond ONLY with a valid JSON object matching this exact schema:
                     {
@@ -245,7 +249,7 @@ object GeminiService {
                 val responseText = candidate?.content?.parts?.firstOrNull()?.text ?: ""
                 val groundingChunks = candidate?.groundingMetadata?.groundingChunks.orEmpty()
                 if (responseText.isNotBlank()) {
-                    return@withContext parseMultimodalJson(responseText, userAllergens, groundingChunks, highRiskAllergens)
+                    return@withContext parseMultimodalJson(responseText, userAllergens, groundingChunks, highRiskAllergens, languageCode)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Multimodal Gemini Vision call failed: ${e.message}", e)
@@ -254,14 +258,15 @@ object GeminiService {
             Log.d(TAG, "GEMINI_API_KEY not configured; using deterministic bitmap visual signature analyzer.")
         }
 
-        analyzeBitmapDeterministically(bitmap, userAllergens, highRiskAllergens)
+        analyzeBitmapDeterministically(bitmap, userAllergens, highRiskAllergens, languageCode)
     }
 
     private fun parseMultimodalJson(
         rawJson: String,
         userAllergens: List<String>,
         groundingChunks: List<GeminiGroundingChunk> = emptyList(),
-        highRiskAllergens: List<String> = emptyList()
+        highRiskAllergens: List<String> = emptyList(),
+        languageCode: String = "en"
     ): GeminiImageExtractionResult {
         val cleaned = rawJson.trim()
             .removePrefix("```json")
@@ -277,7 +282,7 @@ object GeminiService {
         val extractedText = payload?.extractedIngredientsText?.takeIf { it.isNotBlank() }
             ?: "Aqua, Glycerin, Caprylic/Capric Triglyceride, Cetearyl Alcohol, Niacinamide, Panthenol, Tocopherol, Phenoxyethanol"
 
-        val insight = parseGeminiJson(cleaned, extractedText, category, userAllergens, groundingChunks, highRiskAllergens).copy(
+        val insight = parseGeminiJson(cleaned, extractedText, category, userAllergens, groundingChunks, highRiskAllergens, languageCode).copy(
             brandName = brandName,
             ocrConfidence = ocrConfidence
         )
@@ -295,7 +300,8 @@ object GeminiService {
     private fun analyzeBitmapDeterministically(
         bitmap: Bitmap,
         userAllergens: List<String>,
-        highRiskAllergens: List<String> = emptyList()
+        highRiskAllergens: List<String> = emptyList(),
+        languageCode: String = "en"
     ): GeminiImageExtractionResult {
         var rSum = 0L
         var gSum = 0L
@@ -358,7 +364,7 @@ object GeminiService {
         val category = selected.third.first
         val ingredientsText = selected.third.second
 
-        val insight = generateFallbackInsight(ingredientsText, category, userAllergens, highRiskAllergens).copy(
+        val insight = generateFallbackInsight(ingredientsText, category, userAllergens, highRiskAllergens, languageCode).copy(
             brandName = brand,
             ocrConfidence = estimatedConfidence
         )
@@ -378,7 +384,8 @@ object GeminiService {
         category: String,
         region: String,
         userAllergens: List<String> = emptyList(),
-        highRiskAllergens: List<String> = emptyList()
+        highRiskAllergens: List<String> = emptyList(),
+        languageCode: String = "en"
     ): GeminiIngredientInsight = withContext(Dispatchers.IO) {
         val apiKey = try {
             BuildConfig.GEMINI_API_KEY
@@ -387,8 +394,10 @@ object GeminiService {
         }
 
         if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
-            return@withContext generateFallbackInsight(ingredientsText, category, userAllergens, highRiskAllergens)
+            return@withContext generateFallbackInsight(ingredientsText, category, userAllergens, highRiskAllergens, languageCode)
         }
+
+        val languageInstruction = buildLanguagePromptDirective(languageCode)
 
         val allergenDirective = if (userAllergens.isNotEmpty()) {
             """
@@ -411,6 +420,7 @@ object GeminiService {
             Ingredients: $ingredientsText
 
             $allergenDirective
+            $languageInstruction
 
             Evaluate against scientific databases (CIR, EU SCCS, US FDA, PubChem).
             Determine safety tier: "SAFE" (no significant concerns/all within typical cosmetic limits),
@@ -486,9 +496,9 @@ object GeminiService {
             val responseText = candidate?.content?.parts?.firstOrNull()?.text ?: ""
             val groundingChunks = candidate?.groundingMetadata?.groundingChunks.orEmpty()
 
-            parseGeminiJson(responseText, ingredientsText, category, userAllergens, groundingChunks, highRiskAllergens)
+            parseGeminiJson(responseText, ingredientsText, category, userAllergens, groundingChunks, highRiskAllergens, languageCode)
         } catch (e: Exception) {
-            generateFallbackInsight(ingredientsText, category, userAllergens, highRiskAllergens)
+            generateFallbackInsight(ingredientsText, category, userAllergens, highRiskAllergens, languageCode)
         }
     }
 
@@ -498,7 +508,8 @@ object GeminiService {
         category: String,
         userAllergens: List<String>,
         groundingChunks: List<GeminiGroundingChunk> = emptyList(),
-        highRiskAllergens: List<String> = emptyList()
+        highRiskAllergens: List<String> = emptyList(),
+        languageCode: String = "en"
     ): GeminiIngredientInsight {
         try {
             val cleaned = rawJson.trim()
@@ -508,7 +519,7 @@ object GeminiService {
                 .trim()
 
             val payload = payloadAdapter.fromJson(cleaned)
-                ?: return generateFallbackInsight(originalText, category, userAllergens, highRiskAllergens)
+                ?: return generateFallbackInsight(originalText, category, userAllergens, highRiskAllergens, languageCode)
 
             var safetyScore = payload.safetyScore ?: 85
             var safetyTier = (payload.safetyTier ?: "SAFE").uppercase()
@@ -576,7 +587,7 @@ object GeminiService {
                 }
             } ?: emptyList()
 
-            val fallbackForDefaults = generateFallbackInsight(originalText, category, userAllergens, highRiskAllergens)
+            val fallbackForDefaults = generateFallbackInsight(originalText, category, userAllergens, highRiskAllergens, languageCode)
 
             val liveSearchCitations = groundingChunks.mapNotNull { chunk ->
                 val web = chunk.web ?: return@mapNotNull null
@@ -593,25 +604,28 @@ object GeminiService {
                 .ifEmpty { fallbackForDefaults.groundingCitations }
                 .distinctBy { it.title + it.url }
 
-            return GeminiIngredientInsight(
-                safetyScore = safetyScore,
-                safetyTier = safetyTier,
-                headline = headline,
-                subheadline = subheadline,
-                allergensDetected = allergens,
-                highlights = highlights.ifEmpty { fallbackForDefaults.highlights },
-                keyConcerns = concerns.ifEmpty { fallbackForDefaults.keyConcerns },
-                scientificExplanation = explanation,
-                safeUseTips = tips.ifEmpty { fallbackForDefaults.safeUseTips },
-                brandName = brandName,
-                ocrConfidence = ocrConfidence,
-                saferAlternatives = saferAlternatives.ifEmpty { fallbackForDefaults.saferAlternatives },
-                ingredientBreakdowns = breakdowns.ifEmpty { fallbackForDefaults.ingredientBreakdowns },
-                toxicologyProfile = payload.toxicologyProfile ?: fallbackForDefaults.toxicologyProfile,
-                groundingCitations = combinedCitations
+            return localizeInsightForLanguage(
+                GeminiIngredientInsight(
+                    safetyScore = safetyScore,
+                    safetyTier = safetyTier,
+                    headline = headline,
+                    subheadline = subheadline,
+                    allergensDetected = allergens,
+                    highlights = highlights.ifEmpty { fallbackForDefaults.highlights },
+                    keyConcerns = concerns.ifEmpty { fallbackForDefaults.keyConcerns },
+                    scientificExplanation = explanation,
+                    safeUseTips = tips.ifEmpty { fallbackForDefaults.safeUseTips },
+                    brandName = brandName,
+                    ocrConfidence = ocrConfidence,
+                    saferAlternatives = saferAlternatives.ifEmpty { fallbackForDefaults.saferAlternatives },
+                    ingredientBreakdowns = breakdowns.ifEmpty { fallbackForDefaults.ingredientBreakdowns },
+                    toxicologyProfile = payload.toxicologyProfile ?: fallbackForDefaults.toxicologyProfile,
+                    groundingCitations = combinedCitations
+                ),
+                languageCode
             )
         } catch (e: Throwable) {
-            return generateFallbackInsight(originalText, category, userAllergens, highRiskAllergens)
+            return generateFallbackInsight(originalText, category, userAllergens, highRiskAllergens, languageCode)
         }
     }
 
@@ -735,7 +749,8 @@ object GeminiService {
         ingredientsText: String,
         category: String,
         userAllergens: List<String> = emptyList(),
-        highRiskAllergens: List<String> = emptyList()
+        highRiskAllergens: List<String> = emptyList(),
+        languageCode: String = "en"
     ): GeminiIngredientInsight {
         val lower = ingredientsText.lowercase()
 
@@ -883,7 +898,7 @@ object GeminiService {
             )
         }
 
-        return when {
+        val rawInsight = when {
             isHighRisk -> GeminiIngredientInsight(
                 safetyScore = if (hasHighRiskAllergenMatch) 32 else 38,
                 safetyTier = "HIGH_RISK",
@@ -973,5 +988,231 @@ object GeminiService {
                 groundingCitations = defaultCitations
             )
         }
+        return localizeInsightForLanguage(rawInsight, languageCode)
+    }
+
+    /**
+     * Analyzes text extracted from a CameraX scan against the user's Room database allergen profile
+     * (including ruleClassification: MEDICAL_ALLERGY, PERSONAL_SENSITIVITY, PREFERENCE_AVOIDANCE,
+     * and userReasonNote) and returns structured ingredient information in the selected language.
+     */
+    suspend fun analyzeCameraXTextWithProfile(
+        cameraXExtractedText: String,
+        category: String = "Skin Care",
+        region: String = "US & EU",
+        preferences: List<com.example.data.local.PreferenceSettingEntity> = emptyList(),
+        customAllergens: List<com.example.data.local.CustomAllergenEntity> = emptyList(),
+        languageCode: String = "en"
+    ): GeminiIngredientInsight {
+        val enabledPreferences = preferences.filter { it.isEnabled }
+        val enabledCustom = customAllergens.filter { it.isEnabled }
+
+        val userAllergens = buildList {
+            enabledPreferences.forEach { add(it.label) }
+            enabledCustom.forEach { add(it.name) }
+        }.distinct()
+
+        val highRiskAllergens = buildList {
+            enabledPreferences
+                .filter { it.ruleClassification.equals("MEDICAL_ALLERGY", ignoreCase = true) }
+                .forEach { add(it.label) }
+            enabledCustom
+                .filter {
+                    it.ruleClassification.equals("MEDICAL_ALLERGY", ignoreCase = true) ||
+                        it.severityLevel.equals("HIGH_RISK", ignoreCase = true)
+                }
+                .forEach { add(it.name) }
+        }.distinct()
+
+        val baseInsight = analyzeIngredients(
+            ingredientsText = cameraXExtractedText,
+            category = category,
+            region = region,
+            userAllergens = userAllergens,
+            highRiskAllergens = highRiskAllergens,
+            languageCode = languageCode
+        )
+
+        // Enrich matched ingredient breakdowns with the exact Room user rule classification & reason note
+        val enrichedBreakdowns = baseInsight.ingredientBreakdowns.map { item ->
+            val lowerName = item.name.lowercase()
+            val matchedCustom = enabledCustom.firstOrNull { ca ->
+                matchesAllergenOrAlias(lowerName, ca.name.trim().lowercase())
+            }
+            val matchedPref = enabledPreferences.firstOrNull { pref ->
+                matchesAllergenOrAlias(lowerName, pref.label.trim().lowercase()) ||
+                    matchesAllergenOrAlias(lowerName, pref.key.replace("pref_", "").replace("avoid_", "").replace("_", " "))
+            }
+
+            when {
+                matchedCustom != null -> {
+                    val isMedical = matchedCustom.ruleClassification.equals("MEDICAL_ALLERGY", ignoreCase = true) ||
+                        matchedCustom.severityLevel.equals("HIGH_RISK", ignoreCase = true)
+                    val classLabel = when (matchedCustom.ruleClassification.uppercase()) {
+                        "MEDICAL_ALLERGY" -> "Medical Allergy"
+                        "PERSONAL_SENSITIVITY" -> "Personal Sensitivity"
+                        else -> "Preference Avoidance"
+                    }
+                    item.copy(
+                        riskLevel = if (isMedical) "HIGH_RISK" else "CAUTION",
+                        role = "$classLabel Match (${matchedCustom.name})",
+                        regulatoryNote = "Confirmed match to your rule [$classLabel]: ${matchedCustom.name} • ${item.regulatoryNote}"
+                    )
+                }
+                matchedPref != null -> {
+                    val isMedical = matchedPref.ruleClassification.equals("MEDICAL_ALLERGY", ignoreCase = true)
+                    val classLabel = when (matchedPref.ruleClassification.uppercase()) {
+                        "MEDICAL_ALLERGY" -> "Medical Allergy"
+                        "PERSONAL_SENSITIVITY" -> "Personal Sensitivity"
+                        else -> "Preference Avoidance"
+                    }
+                    val reasonSuffix = matchedPref.userReasonNote.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
+                    item.copy(
+                        riskLevel = if (isMedical) "HIGH_RISK" else "CAUTION",
+                        role = "$classLabel Match (${matchedPref.label})",
+                        regulatoryNote = "Confirmed match to your rule [$classLabel$reasonSuffix] • ${item.regulatoryNote}"
+                    )
+                }
+                else -> item
+            }
+        }
+
+        return baseInsight.copy(ingredientBreakdowns = enrichedBreakdowns)
+    }
+
+    internal fun buildLanguagePromptDirective(languageCode: String): String {
+        val code = languageCode.trim().lowercase()
+        val langName = when (code) {
+            "es" -> "Spanish (Español)"
+            "fr" -> "French (Français)"
+            "de" -> "German (Deutsch)"
+            "hi" -> "Hindi (हिन्दी)"
+            "ar" -> "Arabic (العربية)"
+            "ja" -> "Japanese (日本語)"
+            "pt" -> "Portuguese (Português)"
+            else -> "English"
+        }
+        if (code == "en" || code.isBlank()) {
+            return "LANGUAGE DIRECTIVE: Write all user-facing text fields (headline, subheadline, scientificExplanation, highlights, keyConcerns, safeUseTips, and regulatoryNote) in clear English."
+        }
+        return """
+            LANGUAGE DIRECTIVE: Write all user-facing narrative fields ("headline", "subheadline", "scientificExplanation", "highlights", "keyConcerns", "safeUseTips", and each item's "role" and "regulatoryNote") in $langName ($code). Keep JSON keys and enum values ("SAFE", "WARNING", "HIGH_RISK", "CAUTION") in exact English uppercase.
+        """.trimIndent()
+    }
+
+    internal fun localizeInsightForLanguage(
+        insight: GeminiIngredientInsight,
+        languageCode: String
+    ): GeminiIngredientInsight {
+        val code = languageCode.trim().lowercase()
+        if (code == "en" || code.isBlank()) return insight
+
+        val tier = insight.safetyTier.uppercase()
+        val (localizedHeadline, localizedSubheadline, prefixNote) = when (code) {
+            "es" -> Triple(
+                when (tier) {
+                    "HIGH_RISK" -> "Alto Riesgo: Alérgeno o Ingrediente Restringido"
+                    "WARNING" -> "Usar con Precaución: Sensibilidad Detectada"
+                    else -> "Compatible con tu Perfil Personal"
+                },
+                when (tier) {
+                    "HIGH_RISK" -> "Se detectaron ingredientes que coinciden con tus reglas de alergia o límites regulatorios."
+                    "WARNING" -> "Contiene sensibilizantes o activos sujetos a tus filtros personales."
+                    else -> "Ninguna de tus reglas personales de alergia se activó en esta etiqueta."
+                },
+                "[Informe en Español]"
+            )
+            "fr" -> Triple(
+                when (tier) {
+                    "HIGH_RISK" -> "Risque Élevé : Allergène ou Ingrédient Restreint"
+                    "WARNING" -> "Utiliser avec Précaution : Sensibilité Détectée"
+                    else -> "Compatible avec Votre Profil Personnel"
+                },
+                when (tier) {
+                    "HIGH_RISK" -> "Contient des ingrédients correspondant à vos règles d'allergie ou restrictions."
+                    "WARNING" -> "Contient des sensibilisants signalés par votre filtre personnel."
+                    else -> "Aucune règle d'allergie personnelle déclenchée sur cette étiquette."
+                },
+                "[Rapport en Français]"
+            )
+            "de" -> Triple(
+                when (tier) {
+                    "HIGH_RISK" -> "Hohes Risiko: Allergen oder Eingeschränkter Stoff"
+                    "WARNING" -> "Mit Vorsicht Verwenden: Empfindlichkeit Erkannt"
+                    else -> "Kompatibel mit Ihrem Persönlichen Profil"
+                },
+                when (tier) {
+                    "HIGH_RISK" -> "Enthält Inhaltsstoffe, die Ihren Allergieregeln oder Grenzwerten entsprechen."
+                    "WARNING" -> "Enthält Reizstoffe, die in Ihrem persönlichen Filter markiert sind."
+                    else -> "Keine Ihrer persönlichen Allergieregeln wurde ausgelöst."
+                },
+                "[Bericht auf Deutsch]"
+            )
+            "hi" -> Triple(
+                when (tier) {
+                    "HIGH_RISK" -> "उच्च जोखिम: व्यक्तिगत एलर्जेन या प्रतिबंधित घटक"
+                    "WARNING" -> "सावधानी के साथ प्रयोग करें: संवेदनशीलता मिली"
+                    else -> "आपकी व्यक्तिगत प्रोफ़ाइल के अनुकूल"
+                },
+                when (tier) {
+                    "HIGH_RISK" -> "इसमें आपके एलर्जी फ़िल्टर या नियामक सीमाओं से मेल खाने वाले घटक शामिल हैं।"
+                    "WARNING" -> "इसमें आपकी संवेदनशीलता प्रोफ़ाइल द्वारा चिह्नित घटक शामिल हैं।"
+                    else -> "इस लेबल पर आपका कोई भी व्यक्तिगत एलर्जी नियम सक्रिय नहीं हुआ।"
+                },
+                "[हिन्दी रिपोर्ट]"
+            )
+            "ar" -> Triple(
+                when (tier) {
+                    "HIGH_RISK" -> "خطر مرتفع: تم اكتشاف مسبب حساسية شخصي أو مكون مقيد"
+                    "WARNING" -> "استخدم بحذر: تم رصد حساسية محتملة"
+                    else -> "متوافق مع ملف الحساسية الشخصي"
+                },
+                when (tier) {
+                    "HIGH_RISK" -> "يحتوي على مكونات تطابق قواعد الحساسية الطبية أو القيود التنظيمية."
+                    "WARNING" -> "يحتوي على مهيجات أو مواد فعالة محددة في ملفك الشخصي."
+                    else -> "لم يتم تفعيل أي من قواعد الحساسية الشخصية الخاصة بك في هذا الملصق."
+                },
+                "[تقرير باللغة العربية]"
+            )
+            "ja" -> Triple(
+                when (tier) {
+                    "HIGH_RISK" -> "高リスク：個人アレルゲンまたは制限成分を検出"
+                    "WARNING" -> "注意して使用：感受性トリガーを検出"
+                    else -> "個人プロファイルに適合"
+                },
+                when (tier) {
+                    "HIGH_RISK" -> "登録されたアレルギー規則または規制制限に一致する成分が含まれています。"
+                    "WARNING" -> "個人フィルターで指定された感作性成分が含まれています。"
+                    else -> "選択された個人アレルゲンルールに一致する成分は検出されませんでした。"
+                },
+                "[日本語レポート]"
+            )
+            "pt" -> Triple(
+                when (tier) {
+                    "HIGH_RISK" -> "Alto Risco: Alérgeno Pessoal ou Ingrediente Restrito"
+                    "WARNING" -> "Usar com Precaução: Sensibilidade Detectada"
+                    else -> "Compatível com Seu Perfil Pessoal"
+                },
+                when (tier) {
+                    "HIGH_RISK" -> "Contém ingredientes que correspondem às suas regras de alergia ou limites regulatórios."
+                    "WARNING" -> "Contém sensibilizantes sinalizados pelo seu filtro pessoal."
+                    else -> "Nenhuma regra pessoal de alergia foi acionada neste rótulo."
+                },
+                "[Relatório em Português]"
+            )
+            else -> return insight
+        }
+
+        val localizedExplanation = if (insight.scientificExplanation.startsWith(prefixNote)) {
+            insight.scientificExplanation
+        } else {
+            "$prefixNote $localizedSubheadline ${insight.scientificExplanation}"
+        }
+
+        return insight.copy(
+            headline = localizedHeadline,
+            subheadline = localizedSubheadline,
+            scientificExplanation = localizedExplanation
+        )
     }
 }

@@ -1025,20 +1025,48 @@ object IngredientCatalog {
         val normToken = normalizeString(rawToken)
         val enabledPrefs = activePreferences.filter { it.isEnabled }.associateBy { it.key }
 
-        // 1. Evaluate active custom allergens first (supports HIGH_RISK or WARNING severity)
+        fun prefSeverity(key: String, defaultSev: Severity): Severity {
+            val pref = enabledPrefs[key] ?: return defaultSev
+            return when (pref.ruleClassification.uppercase()) {
+                "MEDICAL_ALLERGY" -> Severity.CRITICAL
+                "PERSONAL_SENSITIVITY", "PREFERENCE_AVOIDANCE" -> defaultSev
+                else -> defaultSev
+            }
+        }
+
+        fun enrichExplanation(key: String, baseExplanation: String): String {
+            val pref = enabledPrefs[key] ?: return baseExplanation
+            val classLabel = when (pref.ruleClassification.uppercase()) {
+                "MEDICAL_ALLERGY" -> "Medical Allergy"
+                "PREFERENCE_AVOIDANCE" -> "Personal Avoidance"
+                else -> "Personal Sensitivity"
+            }
+            val noteSuffix = if (pref.userReasonNote.isNotBlank()) " • Your note: \"${pref.userReasonNote}\"" else ""
+            return "[$classLabel] $baseExplanation$noteSuffix"
+        }
+
+        // 1. Evaluate active custom allergens first (supports HIGH_RISK or WARNING severity + ruleClassification)
         for (custom in customAllergens.filter { it.isEnabled }) {
             if (tokenMatchesAllergenQuery(rawToken, canonical, custom.name)) {
-                val sev = if (custom.severityLevel.equals("HIGH_RISK", ignoreCase = true)) {
+                val sev = if (custom.severityLevel.equals("HIGH_RISK", ignoreCase = true) ||
+                    custom.ruleClassification.equals("MEDICAL_ALLERGY", ignoreCase = true)
+                ) {
                     Severity.CRITICAL
                 } else {
                     Severity.CAUTION
                 }
+                val classLabel = when (custom.ruleClassification.uppercase()) {
+                    "MEDICAL_ALLERGY" -> "Medical Allergy"
+                    "PREFERENCE_AVOIDANCE" -> "Personal Avoidance"
+                    else -> "Personal Sensitivity"
+                }
+                val reasonSuffix = if (custom.notes.isNotBlank()) " • Reason: \"${custom.notes}\"" else ""
                 matches.add(
                     AllergenMatchResult(
-                        allergenLabel = "Personal Allergen: ${custom.name}",
+                        allergenLabel = "$classLabel: ${custom.name}",
                         prefKey = "custom_${custom.id}",
                         severity = sev,
-                        explanation = "Flagged by your personal Allergy Filter for \"${custom.name}\" (${if (sev == Severity.CRITICAL) "High Risk escalation" else "Caution alert"})."
+                        explanation = "Confirmed match to your $classLabel rule for \"${custom.name}\"$reasonSuffix."
                     )
                 )
             }
@@ -1052,8 +1080,8 @@ object IngredientCatalog {
                     AllergenMatchResult(
                         allergenLabel = "Fragrance / Parfum",
                         prefKey = "pref_fragrance_free",
-                        severity = Severity.CAUTION,
-                        explanation = "Matches your Fragrance-Free filter. Contains aromatic parfum or volatile fragrance sensitizer."
+                        severity = prefSeverity("pref_fragrance_free", Severity.CAUTION),
+                        explanation = enrichExplanation("pref_fragrance_free", "Matches your Fragrance-Free filter. Contains aromatic parfum or volatile fragrance sensitizer.")
                     )
                 )
             }
@@ -1066,8 +1094,8 @@ object IngredientCatalog {
                     AllergenMatchResult(
                         allergenLabel = "Sulfates (SLS / SLES)",
                         prefKey = "pref_sulfate_free",
-                        severity = Severity.CAUTION,
-                        explanation = "Matches your Sulfate-Free filter. Contains anionic sulfate surfactant."
+                        severity = prefSeverity("pref_sulfate_free", Severity.CAUTION),
+                        explanation = enrichExplanation("pref_sulfate_free", "Matches your Sulfate-Free filter. Contains anionic sulfate surfactant.")
                     )
                 )
             }
@@ -1080,8 +1108,8 @@ object IngredientCatalog {
                     AllergenMatchResult(
                         allergenLabel = "Parabens",
                         prefKey = "pref_paraben_free",
-                        severity = Severity.CAUTION,
-                        explanation = "Matches your Paraben-Free filter. Contains p-hydroxybenzoate ester preservative."
+                        severity = prefSeverity("pref_paraben_free", Severity.CAUTION),
+                        explanation = enrichExplanation("pref_paraben_free", "Matches your Paraben-Free filter. Contains p-hydroxybenzoate ester preservative.")
                     )
                 )
             }
@@ -1094,8 +1122,8 @@ object IngredientCatalog {
                     AllergenMatchResult(
                         allergenLabel = "Silicones",
                         prefKey = "pref_silicone_free",
-                        severity = Severity.CAUTION,
-                        explanation = "Matches your Silicone-Free filter. Contains siloxane/dimethicone polymer."
+                        severity = prefSeverity("pref_silicone_free", Severity.CAUTION),
+                        explanation = enrichExplanation("pref_silicone_free", "Matches your Silicone-Free filter. Contains siloxane/dimethicone polymer.")
                     )
                 )
             }
@@ -1112,8 +1140,8 @@ object IngredientCatalog {
                     AllergenMatchResult(
                         allergenLabel = "Pregnancy Caution",
                         prefKey = "pref_pregnancy_caution",
-                        severity = Severity.CRITICAL,
-                        explanation = "Matches your Pregnancy & Nursing Caution filter. Scientific bodies advise avoiding or limiting exposure."
+                        severity = prefSeverity("pref_pregnancy_caution", Severity.CRITICAL),
+                        explanation = enrichExplanation("pref_pregnancy_caution", "Matches your Pregnancy & Nursing Caution filter. Scientific bodies advise avoiding or limiting exposure.")
                     )
                 )
             }
@@ -1130,8 +1158,8 @@ object IngredientCatalog {
                     AllergenMatchResult(
                         allergenLabel = "Animal-Derived (Non-Vegan)",
                         prefKey = "pref_vegan",
-                        severity = Severity.CAUTION,
-                        explanation = "Matches your Vegan / Cruelty-Free filter. Derived from animal origin."
+                        severity = prefSeverity("pref_vegan", Severity.CAUTION),
+                        explanation = enrichExplanation("pref_vegan", "Matches your Vegan / Cruelty-Free filter. Derived from animal origin.")
                     )
                 )
             }
@@ -1144,8 +1172,8 @@ object IngredientCatalog {
                     AllergenMatchResult(
                         allergenLabel = "Tree Nut / Peanut Allergen",
                         prefKey = "pref_tree_nuts",
-                        severity = Severity.CRITICAL,
-                        explanation = "Matches your Tree Nut & Peanut Allergen filter. Contains botanical nut/seed protein derivatives."
+                        severity = prefSeverity("pref_tree_nuts", Severity.CRITICAL),
+                        explanation = enrichExplanation("pref_tree_nuts", "Matches your Tree Nut & Peanut Allergen filter. Contains botanical nut/seed protein derivatives.")
                     )
                 )
             }
@@ -1158,8 +1186,8 @@ object IngredientCatalog {
                     AllergenMatchResult(
                         allergenLabel = "Gluten / Wheat Derivative",
                         prefKey = "pref_gluten",
-                        severity = Severity.CRITICAL,
-                        explanation = "Matches your Gluten / Wheat filter. Contains grain protein or cross-contact derivative."
+                        severity = prefSeverity("pref_gluten", Severity.CRITICAL),
+                        explanation = enrichExplanation("pref_gluten", "Matches your Gluten / Wheat filter. Contains grain protein or cross-contact derivative.")
                     )
                 )
             }
@@ -1172,8 +1200,8 @@ object IngredientCatalog {
                     AllergenMatchResult(
                         allergenLabel = "Essential Oil / Terpene",
                         prefKey = "pref_essential_oils",
-                        severity = Severity.CAUTION,
-                        explanation = "Matches your Essential Oils & Terpenes filter. Contains volatile botanical oil."
+                        severity = prefSeverity("pref_essential_oils", Severity.CAUTION),
+                        explanation = enrichExplanation("pref_essential_oils", "Matches your Essential Oils & Terpenes filter. Contains volatile botanical oil.")
                     )
                 )
             }
@@ -1186,8 +1214,8 @@ object IngredientCatalog {
                     AllergenMatchResult(
                         allergenLabel = "Soy / Legume Derivative",
                         prefKey = "pref_soy",
-                        severity = Severity.CAUTION,
-                        explanation = "Matches your Soy & Legume filter. Contains glycine soja or soy derivative."
+                        severity = prefSeverity("pref_soy", Severity.CAUTION),
+                        explanation = enrichExplanation("pref_soy", "Matches your Soy & Legume filter. Contains glycine soja or soy derivative.")
                     )
                 )
             }

@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.util.Log
+import android.view.Surface
 import android.view.ViewGroup
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
@@ -47,6 +48,7 @@ import java.util.concurrent.TimeUnit
  * - Supports functional Torch / Flash toggle via CameraControl.enableTorch & ImageCapture.flashMode.
  * - Supports Tap-to-Focus (FocusMeteringAction) with animated visual focus ring at tap coordinates.
  * - Supports Pinch-to-Zoom and programmatic zoomRatio updates.
+ * - Reports CameraX readiness and bind errors for deterministic UI feedback.
  */
 @Composable
 fun CameraPreview(
@@ -55,6 +57,8 @@ fun CameraPreview(
     zoomRatio: Float = 1.0f,
     onZoomChanged: (Float) -> Unit = {},
     onLuminosityEvaluated: (Float) -> Unit = {},
+    onCameraReadyChanged: (Boolean) -> Unit = {},
+    onCameraBindError: (String?) -> Unit = {},
     onCameraBound: (Camera, ImageCapture, PreviewView) -> Unit
 ) {
     val context = LocalContext.current
@@ -115,6 +119,7 @@ fun CameraPreview(
                 analysisExecutor.shutdown()
             } catch (_: Exception) {
             }
+            onCameraReadyChanged(false)
         }
     }
 
@@ -168,6 +173,7 @@ fun CameraPreview(
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                     scaleType = PreviewView.ScaleType.FILL_CENTER
+                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 }
                 previewViewInstance = previewView
 
@@ -175,12 +181,18 @@ fun CameraPreview(
                 cameraProviderFuture.addListener({
                     try {
                         val cameraProvider = cameraProviderFuture.get()
-                        val preview = Preview.Builder().build().also {
-                            it.surfaceProvider = previewView.surfaceProvider
-                        }
+                        val rotation = previewView.display?.rotation ?: Surface.ROTATION_0
+
+                        val preview = Preview.Builder()
+                            .setTargetRotation(rotation)
+                            .build()
+                            .also {
+                                it.surfaceProvider = previewView.surfaceProvider
+                            }
 
                         val imageCapture = ImageCapture.Builder()
                             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                            .setTargetRotation(rotation)
                             .setFlashMode(
                                 if (isTorchEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
                             )
@@ -190,6 +202,7 @@ fun CameraPreview(
                         // Real-time frame luminosity analyzer for low-light detection and Gemini Vision readiness
                         val imageAnalysis = ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .setTargetRotation(rotation)
                             .build()
                             .also { analysis ->
                                 analysis.setAnalyzer(analysisExecutor) { imageProxy ->
@@ -206,7 +219,11 @@ fun CameraPreview(
                                 }
                             }
 
-                        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                        val cameraSelector = if (cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                            CameraSelector.DEFAULT_BACK_CAMERA
+                        } else {
+                            CameraSelector.DEFAULT_FRONT_CAMERA
+                        }
 
                         cameraProvider.unbindAll()
                         val camera = cameraProvider.bindToLifecycle(
@@ -220,9 +237,13 @@ fun CameraPreview(
                         if (isTorchEnabled && camera.cameraInfo.hasFlashUnit()) {
                             camera.cameraControl.enableTorch(true)
                         }
+                        onCameraBindError(null)
+                        onCameraReadyChanged(true)
                         onCameraBound(camera, imageCapture, previewView)
                     } catch (e: Exception) {
                         Log.e("CameraPreview", "CameraX binding failed: ${e.message}", e)
+                        onCameraReadyChanged(false)
+                        onCameraBindError(e.message ?: "Camera hardware unavailable in current environment")
                     }
                 }, ContextCompat.getMainExecutor(ctx))
 

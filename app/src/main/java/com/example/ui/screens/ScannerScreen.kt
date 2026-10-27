@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -62,6 +63,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
+import com.example.ui.components.AllergenBottomSheet
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -89,6 +92,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.data.catalog.PresetSamples
 import com.example.ui.ScanViewModel
+import com.example.ui.Screen
 import com.example.ui.components.CameraPreview
 import com.example.ui.theme.Bone
 import com.example.ui.theme.BrandScanOrange
@@ -110,6 +114,7 @@ import com.example.ui.theme.SmokyBlack
  *   "Align the ingredient list within the frame", bottom Gallery, White Shutter Ring, and Manual/Sample options.
  * - Screen 7 (Crop & Align Review): Post-capture review with orange crop handles and "Confirm Image ->" CTA.
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ScannerScreen(viewModel: ScanViewModel) {
     BackHandler {
@@ -144,6 +149,13 @@ fun ScannerScreen(viewModel: ScanViewModel) {
     var showTestSamplesTray by remember { mutableStateOf(false) }
     var reviewBeforeAnalyze by remember { mutableStateOf(false) }
     var capturedReviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var showAllergenSheet by remember { mutableStateOf(false) }
+
+    val preferences by viewModel.preferences.collectAsState()
+    val customAllergens by viewModel.customAllergens.collectAsState()
+    val activeProfile by viewModel.activeAllergenProfile.collectAsState()
+    val activeAllergenCount = preferences.count { it.isEnabled } + customAllergens.count { it.isEnabled }
+    var isCameraXReady by remember { mutableStateOf(false) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -226,6 +238,7 @@ fun ScannerScreen(viewModel: ScanViewModel) {
                 zoomRatio = zoomRatio,
                 onZoomChanged = { zoomRatio = it },
                 onLuminosityEvaluated = { frameLuminosity = it },
+                onCameraReadyChanged = { isCameraXReady = it },
                 onCameraBound = { cam, imgCap, pv ->
                     cameraInstance = cam
                     imageCaptureInstance = imgCap
@@ -426,6 +439,43 @@ fun ScannerScreen(viewModel: ScanViewModel) {
                         imageVector = if (isFlashOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
                         contentDescription = if (isFlashOn) "Disable Flash" else "Enable Flash",
                         tint = if (isFlashOn) BrandSmokyBlack else Color.White
+                    )
+                }
+            }
+
+            // Quick Allergy Filter Pill in Scanner
+            Spacer(modifier = Modifier.height(10.dp))
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = BrandSmokyBlack.copy(alpha = 0.85f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (activeAllergenCount > 0) BrandScanOrange else Color.White.copy(alpha = 0.22f)
+                ),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { showAllergenSheet = true }
+                    .testTag("scanner_allergy_filter_pill")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Shield,
+                        contentDescription = null,
+                        tint = if (activeAllergenCount > 0) BrandScanOrange else Color.White,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = buildString {
+                            append("Allergy Filter: $activeAllergenCount active")
+                            activeProfile?.let { append(" • ${it.profileName}") }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
                     )
                 }
             }
@@ -895,6 +945,40 @@ fun ScannerScreen(viewModel: ScanViewModel) {
                 }
             }
 
+            if (uiState.captureErrorMessage != null) {
+                com.example.ui.components.CameraCaptureErrorBanner(
+                    errorMessage = uiState.captureErrorMessage!!,
+                    onRetryCapture = {
+                        viewModel.clearCaptureError()
+                        com.example.ui.util.HapticsManager.triggerCameraCapture(context, previewViewRef)
+                        viewModel.onCaptureStarted()
+                        captureRealFrameOrFallback(
+                            context = context,
+                            imageCapture = imageCaptureInstance,
+                            previewView = previewViewRef,
+                            seedIndex = uiState.batchQueue.size,
+                            onCapturingState = { isCapturing = it },
+                            onBitmapReady = { bitmap ->
+                                if (reviewBeforeAnalyze) {
+                                    capturedReviewBitmap = bitmap
+                                } else if (uiState.isBatchScanMode) {
+                                    viewModel.enqueueBatchBitmap(bitmap)
+                                } else {
+                                    viewModel.onRealPhotoCapturedOrPicked(bitmap)
+                                }
+                            }
+                        )
+                    },
+                    onPickFromGallery = {
+                        viewModel.clearCaptureError()
+                        photoPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    onDismiss = { viewModel.clearCaptureError() }
+                )
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -938,6 +1022,7 @@ fun ScannerScreen(viewModel: ScanViewModel) {
                         .border(3.5.dp, BrandScanOrange, CircleShape)
                         .clickable(enabled = !isCapturing) {
                             com.example.ui.util.HapticsManager.triggerCameraCapture(context, previewViewRef)
+                            viewModel.onCaptureStarted()
                             captureRealFrameOrFallback(
                                 context = context,
                                 imageCapture = imageCaptureInstance,
@@ -1180,6 +1265,15 @@ fun ScannerScreen(viewModel: ScanViewModel) {
                     }
                 }
             }
+        }
+
+        if (showAllergenSheet) {
+            AllergenBottomSheet(
+                sheetState = rememberModalBottomSheetState(),
+                viewModel = viewModel,
+                onOpenFullSettings = { viewModel.navigateTo(Screen.AllergenSettings) },
+                onDismiss = { showAllergenSheet = false }
+            )
         }
     }
 }

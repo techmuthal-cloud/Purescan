@@ -1,0 +1,786 @@
+PureScan Android Application
+
+Codebase Audit, Bug Fixing, Debugging & Production Readiness Plan
+
+Repository: https://github.com/techmuthal-cloud/Purescan
+Platform: Android
+Primary technologies: Kotlin, Jetpack Compose, Room, CameraX, Retrofit/OkHttp, Gemini AI
+Document purpose: Engineering remediation specification and production-readiness roadmap
+Status: Initial static code review; runtime verification pending
+Priority: Resolve correctness and security issues before adding new features
+
+---
+
+1. Executive Summary
+
+PureScan needs a structured engineering pass before it can be considered production-ready. The objective is to make scanning reliable, prevent misleading analysis results, protect credentials and personal information, validate evidence, and ensure that the app behaves correctly when services fail.
+
+The existing codebase contains several areas requiring attention:
+
+1. Local password handling and account creation in "ScanRepository.kt".
+2. Direct Gemini API access from the Android client in "GeminiService.kt".
+3. Synthetic-image and deterministic fallback paths that can be confused with genuine scan analysis.
+4. Default entity values that can present a newly created record as safe before analysis.
+5. AI-generated safety explanations and citations that require independent validation.
+6. Room database migration behavior that can destroy user data.
+7. Network failure handling, privacy-safe logging, and API abuse controls.
+8. Missing or unverified automated build, test, security, and release gates.
+
+These are engineering risks, not proof that every affected feature is currently failing in production. Each change must be verified against the actual implementation and its expected behavior.
+
+1.1 Definition of production-ready
+
+PureScan is ready for a controlled production release only when:
+
+- A failed, incomplete, or unavailable scan cannot display a verified safety verdict.
+- API credentials and privileged operations are protected on a trusted server.
+- Authentication and authorization behave correctly.
+- Scan results have explicit provenance and validated evidence.
+- User data survives supported application upgrades.
+- Automated tests cover critical safety and security paths.
+- The release build passes functional, privacy, performance, and security checks.
+- Monitoring and a documented incident-response process are available.
+
+A successful compilation alone does not meet these requirements.
+
+---
+
+2. Codebase Scope and Review Limitations
+
+The initial review covered the following files and their relevant responsibilities.
+
+File| Primary responsibility| Review focus
+"app/build.gradle.kts"| Android build configuration| Package identity, dependencies, SDK configuration
+"AndroidManifest.xml"| App permissions and components| Backup, exported components, security
+"MainActivity.kt"| Application entry point| Startup and application integration
+"GeminiService.kt"| AI requests and analysis fallbacks| API key handling, timeouts, output validation
+"ScanRepository.kt"| Repository and account-related logic| Password handling, account flow
+"EvidenceEngine.kt"| Evidence evaluation| Ingredient matching and evidence-based verdicts
+"ScanViewModel.kt"| UI state and scan orchestration| State transitions, failure recovery
+"AppDatabase.kt"| Room database configuration| Migration and data retention
+"Entities.kt"| Persistent data models| Unsafe default values and state representation
+"ScanDao.kt"| Database queries| Persistence correctness
+"ScannerScreen.kt"| Scanning interface| Capture failure and synthetic input paths
+"ReportResultScreen.kt"| Report rendering| Fallback insight and result presentation
+"AuthScreen.kt"| Authentication interface| Sign-in and sign-up behavior
+"PreferencesScreen.kt"| User preferences| Privacy and settings behavior
+"ScanSafeEvidenceTest.kt"| Existing evidence tests| Coverage and verification
+"backup_rules.xml" and "data_extraction_rules.xml"| Backup configuration| Sensitive data exposure
+"file_paths.xml"| FileProvider path configuration| File access scope
+
+Important: This is not a claim that every line, dependency, server configuration, or release artifact has been reviewed. The next audit must check the current repository revision, compile the project, execute tests, and inspect all relevant paths.
+
+---
+
+3. Severity and Remediation Order
+
+P0 — Block production release
+
+ID| Issue| Primary location
+PS-001| Unsafe or unverified scan outcomes| "Entities.kt", "GeminiService.kt", "ScannerScreen.kt"
+PS-002| Client-side Gemini credential exposure| "GeminiService.kt"
+PS-003| Local password and authentication design| "ScanRepository.kt", authentication UI
+PS-004| Unverified AI-generated safety claims| "GeminiService.kt", "EvidenceEngine.kt"
+PS-005| Destructive database migration fallback| "AppDatabase.kt"
+
+P1 — Resolve before public launch
+
+ID| Issue| Primary location
+PS-006| Incomplete error and state handling| "ScanViewModel.kt", scanner and report screens
+PS-007| Insufficient evidence and allergy test coverage| "EvidenceEngine.kt", test sources
+PS-008| Privacy-sensitive logging and backup review| Network service, manifest, backup rules
+PS-009| Missing verified build and release pipeline| Gradle, tests, GitHub Actions
+PS-010| Unverified request limits and abuse controls| AI service and proposed backend
+
+P2 — Complete during release hardening
+
+- Performance and memory testing on lower-end devices.
+- Accessibility and outdoor readability checks.
+- Release signing and application identity verification.
+- Crash reporting and operational monitoring.
+- Dependency vulnerability review.
+- Privacy disclosures, data deletion, and support procedures.
+
+---
+
+4. Detailed Fix Specifications
+
+PS-001 — Prevent false-safe scan results
+
+Affected files: "Entities.kt", "GeminiService.kt", "ScannerScreen.kt", "ScanViewModel.kt", "ReportResultScreen.kt"
+
+Current concern
+
+The reviewed "ScanEntity" model has defaults such as:
+
+- "safetyScore = 85"
+- "safetyTier = "SAFE""
+- Positive default headline and subheadline values.
+
+The scanner also contains fallback behavior involving "analyzeBitmapDeterministically()" and "createSyntheticLabelBitmap()" when capture or API analysis fails.
+
+These defaults and fallback paths create a risk that an incomplete or artificial input could appear to have received a genuine safety assessment.
+
+Required changes
+
+1. Introduce explicit scan states:
+   
+   - "PENDING"
+   - "CAPTURING"
+   - "PROCESSING"
+   - "COMPLETED"
+   - "INCONCLUSIVE"
+   - "FAILED"
+
+2. Represent the verdict separately from the processing state:
+   
+   - "SAFE_WITH_RESPECT_TO_CHECKED_RULES"
+   - "WARNING"
+   - "UNSAFE_MATCH"
+   - "UNKNOWN"
+
+3. Remove positive safety defaults. A new scan must have no safety verdict until the required analysis and validation have completed.
+
+4. Remove any path that silently substitutes a synthetic image for a real scan in production mode.
+
+5. If capture fails, display an actionable message and allow the user to retry.
+
+6. If AI analysis fails, show the failure or an explicitly labelled partial result. Do not present the fallback as a successful AI analysis.
+
+7. Keep demonstration data in a separate, clearly labelled demo flow.
+
+8. Ensure the report screen distinguishes a verified result from a partial or unavailable result.
+
+Suggested model
+
+Adapt this example to the existing Kotlin model rather than replacing the model blindly.
+
+enum class ScanStatus {
+    PENDING,
+    CAPTURING,
+    PROCESSING,
+    COMPLETED,
+    INCONCLUSIVE,
+    FAILED
+}
+
+enum class SafetyVerdict {
+    UNKNOWN,
+    SAFE_WITH_RESPECT_TO_CHECKED_RULES,
+    WARNING,
+    UNSAFE_MATCH
+}
+
+The final schema must also record whether evidence validation passed. A "COMPLETED" state must not automatically mean that a product is safe.
+
+Required tests
+
+- New scan displays no safety verdict.
+- Failed camera capture cannot produce a completed scan.
+- Synthetic demo data cannot enter the production scan path.
+- API timeout cannot produce a verified-safe result.
+- Malformed AI output cannot produce a verified-safe result.
+- A valid result is displayed only after validation.
+- Retry does not accidentally reuse an earlier scan's verdict.
+
+Acceptance criterion: No failure, timeout, empty response, malformed response, or synthetic input can generate a genuine-looking verified-safe verdict.
+
+---
+
+PS-002 — Move Gemini access behind a secured backend
+
+Affected file: "GeminiService.kt"
+Related files: Gradle configuration and proposed backend service
+
+Current concern
+
+The reviewed service sends Gemini requests directly from the Android application using "BuildConfig.GEMINI_API_KEY", including the key as a request query parameter.
+
+An API key embedded in a mobile application cannot be treated as a secret. Build configuration does not prevent extraction from a distributed application.
+
+Required architecture
+
+PureScan Android App
+        |
+        | Authenticated HTTPS request
+        v
+PureScan Backend API
+        |
+        +--> Authentication / authorization
+        |
+        +--> Input validation and rate limits
+        |
+        +--> Server-side Gemini API client
+        |        |
+        |        +--> Secret Manager
+        |
+        +--> Response validation
+        |
+        +--> Evidence validation
+        |
+        v
+Validated result returned to Android
+
+Implementation steps
+
+1. Create a backend API using Cloud Run or Cloud Functions.
+2. Store the Gemini API key in Google Cloud Secret Manager or an equivalent server-side secret store.
+3. Remove the direct Gemini credential from the Android production request path.
+4. Authenticate incoming requests and enforce user authorization.
+5. Validate image size, MIME type, payload size, and allowed request fields.
+6. Configure connection and response timeouts.
+7. Implement rate limits, concurrency limits, and spending alerts.
+8. Return structured error codes without exposing internal stack traces or secrets.
+9. Restrict API key usage and rotate any credential that may already have been exposed.
+10. Ensure the backend rejects malformed requests before calling Gemini.
+
+Required tests
+
+- Unauthenticated request is rejected where authentication is required.
+- Oversized image is rejected.
+- Invalid content type is rejected.
+- Rate-limited client receives a controlled response.
+- Backend timeout returns a recoverable error.
+- No API key appears in Android source, APK contents, logs, or API responses.
+- Invalid AI output is rejected before returning a final result.
+
+Acceptance criterion: Production Android builds contain no privileged Gemini secret, and the backend validates every request and response.
+
+---
+
+PS-003 — Replace local password handling with proper authentication
+
+Affected file: "ScanRepository.kt"
+Related files: "AuthScreen.kt", Firebase configuration, repository interfaces
+
+Current concern
+
+The reviewed repository uses SHA-256 with an email-derived string as salt, permits passwords as short as four characters, and can create an account through the login path if no account exists.
+
+This is not an appropriate production authentication design. SHA-256 alone is not a password-hashing scheme designed to resist offline password guessing, and a user-controlled email string is not a secure password salt.
+
+Required changes
+
+1. Remove local password verification and password persistence from the production authentication path.
+2. Use Firebase Authentication or another established identity provider.
+3. Separate sign-up, sign-in, password reset, and email verification.
+4. Do not silently create a new account when a sign-in attempt fails because the account does not exist.
+5. Provide generic, controlled authentication errors where appropriate.
+6. Protect authenticated backend requests with verified identity tokens.
+7. Apply authorization checks on the server, not only in the UI.
+8. Review account deletion, sign-out, and credential recovery flows.
+9. Migrate existing local account data carefully if the current app has real users. Do not attempt to migrate plaintext or weakly hashed passwords as if they were secure credentials.
+
+Required tests
+
+- Unknown account cannot be silently created by sign-in.
+- Incorrect password fails.
+- Sign-up and sign-in follow distinct flows.
+- Password reset works.
+- Signed-out users cannot access protected backend operations.
+- Expired or invalid authentication tokens are rejected.
+- Sign-out clears sensitive in-memory state.
+
+Acceptance criterion: Identity is handled by a supported authentication provider, and backend authorization is enforced independently of the Android UI.
+
+---
+
+PS-004 — Validate AI output and safety evidence
+
+Affected files: "GeminiService.kt", "EvidenceEngine.kt", "ReportResultScreen.kt"
+
+Current concern
+
+The AI prompt contains structured output examples, scores, safety tiers, scientific explanations, citations, and alternatives. Model-generated text is not independently verified merely because it is valid JSON or includes a citation.
+
+Required design
+
+Separate the process into four stages:
+
+1. Extraction: Identify visible product information and possible ingredients.
+2. Normalization: Normalize ingredient names and record OCR or model uncertainty.
+3. Evidence evaluation: Match the normalized ingredients against an explicit, versioned evidence catalog and the user's selected rules.
+4. Presentation: Display only the conclusions supported by the validated evidence.
+
+The AI model must not be the sole authority for the final safety verdict.
+
+Evidence requirements
+
+Each evidence record should support, where applicable:
+
+- Ingredient or substance identifier.
+- Source organization and source URL.
+- Publication or last-verified date.
+- Jurisdiction.
+- Applicable conditions and limitations.
+- Evidence type and quality.
+- Record version.
+- Review status.
+
+Verdict rules
+
+- Unknown ingredient identity must remain unknown.
+- Missing evidence must not be interpreted as proof of safety.
+- An allergen match must trigger the appropriate warning logic.
+- A general hazard classification must not automatically be described as proof that a particular product is unsafe under all conditions.
+- Regulatory statements must identify their jurisdiction and relevant conditions.
+- Suggested alternatives must be checked against the same evidence rules before being recommended.
+- AI-provided citations must be checked against trusted records before being displayed as verified evidence.
+
+Required tests
+
+- Ingredient matches an applicable allergen rule.
+- Ingredient does not match any known catalog record.
+- Catalog evidence is expired or unavailable.
+- Jurisdiction does not match.
+- AI returns invalid JSON.
+- AI returns a citation that does not exist in the trusted catalog.
+- AI output contradicts deterministic evidence.
+- A mixed or uncertain ingredient list produces an appropriately qualified result.
+
+Acceptance criterion: Every displayed safety claim has traceable supporting evidence or is clearly labelled as unverified information.
+
+---
+
+PS-005 — Replace destructive database fallback
+
+Affected file: "AppDatabase.kt"
+
+Current concern
+
+The reviewed Room database configuration uses "fallbackToDestructiveMigration(true)". When Room cannot find a suitable migration, destructive fallback can delete and recreate database tables, causing data loss.
+
+Required changes
+
+1. Remove destructive migration fallback from production configuration.
+2. Document the current database schema and version.
+3. Add explicit Room migrations from each supported released version.
+4. Use schema export and commit schema snapshots to version control.
+5. Test upgrades from existing versions using representative databases.
+6. Preserve scan history and user preferences when upgrading.
+7. Define a deliberate recovery strategy for genuinely unrecoverable database states.
+8. If data reset is ever used for development, ensure it is confined to debug-only builds.
+
+Required tests
+
+- Upgrade from every supported database version.
+- Existing scan records survive migration.
+- Existing preferences survive migration.
+- Newly added columns receive valid migration defaults.
+- Interrupted or failed migration is handled safely.
+- Fresh installation creates the expected schema.
+
+Acceptance criterion: Supported upgrades do not silently erase user data.
+
+---
+
+PS-006 — Make scan state management deterministic
+
+Affected files: "ScanViewModel.kt", "ScannerScreen.kt", "ReportResultScreen.kt"
+
+Required changes
+
+1. Define a single source of truth for the current scan state.
+2. Prevent duplicate analysis requests for the same submission unless retry is explicit.
+3. Cancel or safely supersede obsolete requests when the user starts another scan.
+4. Associate every response with the scan identifier that initiated it.
+5. Prevent stale responses from overwriting newer UI state.
+6. Separate loading, partial, success, and failure states.
+7. Use coroutine cancellation and structured concurrency correctly.
+8. Ensure the UI cannot navigate to a completed report before required validation finishes.
+9. Remove arbitrary delays used only to simulate analysis progress from the production path.
+10. Provide retry behavior for transient network errors without creating duplicate billable requests.
+
+Required tests
+
+- Rapidly tapping the scan button.
+- Rotating the device during analysis.
+- Leaving and reopening the scanner.
+- Cancelling an in-progress request.
+- Starting scan B while scan A is still processing.
+- Receiving scan A's response after scan B.
+- Offline mode and reconnection.
+- Repeated retries following a timeout.
+
+Acceptance criterion: The result shown always belongs to the correct scan, and state transitions remain valid under cancellation, navigation, and network failure.
+
+---
+
+PS-007 — Expand automated tests
+
+Existing test file: "ScanSafeEvidenceTest.kt"
+
+The existence of a test file does not establish that the tests pass or adequately cover the critical paths.
+
+Required test layers
+
+Layer| Required coverage
+Unit tests| Evidence rules, ingredient normalization, verdict calculation
+Repository tests| Error propagation, data persistence, authentication boundaries
+Database tests| Migrations and data integrity
+API tests| Validation, timeouts, malformed responses, authorization
+Compose UI tests| Loading, failure, retry, and report states
+Instrumented tests| Camera flow, device lifecycle, Room integration
+Security tests| Credential exposure, access controls, sensitive logging
+Regression tests| Previously discovered false-safe and stale-result bugs
+
+Commands to run from the repository root
+
+Use the Gradle wrapper included in the project. On Windows PowerShell:
+
+.\gradlew.bat --version
+.\gradlew.bat testDebugUnitTest
+.\gradlew.bat lintDebug
+.\gradlew.bat assembleDebug
+
+For connected-device tests, after a suitable emulator or device is available:
+
+.\gradlew.bat connectedDebugAndroidTest
+
+These are proposed verification commands, not results from a completed build. Actual task names can vary with the project's Gradle configuration.
+
+Failure-handling procedure
+
+For every failed command:
+
+1. Save the complete terminal output.
+2. Identify the first meaningful error rather than only the final Gradle failure summary.
+3. Determine whether the problem is environmental, dependency-related, a compilation error, a failing assertion, or a runtime defect.
+4. Fix one logical issue at a time.
+5. Rerun the smallest relevant test.
+6. Rerun the full affected suite.
+7. Record the fix and regression test in the issue tracker.
+
+Acceptance criterion: All required test suites pass in a reproducible environment, with no ignored critical failures.
+
+---
+
+PS-008 — Review privacy, logs, backups, and file access
+
+Affected files: "AndroidManifest.xml", backup-rule XML files, "file_paths.xml", network service
+
+Required changes
+
+1. Review whether "android:allowBackup="true"" is appropriate for the actual data stored by PureScan.
+2. Exclude sensitive information from backups where required by the product's threat model.
+3. Inspect every FileProvider path and grant access only to the minimum necessary files.
+4. Verify that exported activities, services, receivers, and providers are intentional.
+5. Audit permissions and remove unused permissions.
+6. Remove sensitive payloads from production logs.
+7. Review the OkHttp logging interceptor currently configured at BASIC level and confirm that credentials, product labels, personal information, and request bodies cannot leak through any logging path.
+8. Avoid collecting allergy profiles or other sensitive user data unless necessary and explicitly explained.
+9. Define retention and deletion behavior for images, scan history, analytics, and account data.
+10. Ensure crash reports do not contain raw labels, authentication tokens, or sensitive screenshots.
+
+Required tests
+
+- Inspect release logs for secrets and sensitive content.
+- Verify backup and restore behavior.
+- Attempt unauthorized file access.
+- Review exported component access.
+- Confirm user deletion behavior matches the privacy policy.
+
+Acceptance criterion: Sensitive data is collected minimally, stored deliberately, logged safely, and deleted according to documented policy.
+
+---
+
+PS-009 — Establish CI and release quality gates
+
+Required implementation
+
+Set up GitHub Actions to execute automated checks on pull requests and release branches.
+
+Recommended checks:
+
+1. Gradle compilation.
+2. Unit tests.
+3. Lint.
+4. Dependency vulnerability review.
+5. Secret scanning.
+6. Instrumented tests where suitable infrastructure is available.
+7. Release artifact creation.
+8. Artifact signing and provenance controls.
+
+Branch policy
+
+- Use a dedicated working branch for each remediation area.
+- Require a successful CI run before merging.
+- Review the diff before accepting AI-generated changes.
+- Protect release credentials using repository or environment secrets.
+- Never store signing passwords or production API secrets in source control.
+
+Application identity
+
+The reviewed Gradle configuration uses:
+
+- Namespace: "com.example"
+- Application ID: "com.aistudio.scansafe.pxzmbq"
+- Version code: "1"
+- Version name: "1.0"
+- Minimum SDK: "24"
+- Target SDK: "36"
+
+Confirm these values against the current repository before changing them. Choose the permanent package/application ID before publishing because changing the application ID later generally creates a different Play Store application.
+
+Acceptance criterion: A pull request cannot be considered release-ready until its required automated checks pass and the release artifact is reproducible.
+
+---
+
+PS-010 — Add operational controls and monitoring
+
+Required controls
+
+- Backend request and error metrics.
+- Rate-limit and abuse monitoring.
+- Gemini usage and cost monitoring.
+- Crash reporting with Firebase Crashlytics or an equivalent service.
+- Network failure metrics.
+- Privacy-safe request correlation IDs.
+- Alerts for abnormal failure rates and spending.
+- A documented procedure to disable a faulty backend feature.
+- Rollback instructions for failed releases.
+
+Do not send raw product images, authentication tokens, or sensitive personal information to monitoring systems unless explicitly justified and protected.
+
+Acceptance criterion: The team can detect failures, investigate them without exposing sensitive data, and disable or roll back a defective release.
+
+---
+
+5. Recommended Implementation Architecture
+
+Android App
+  ├── Jetpack Compose UI
+  ├── CameraX capture
+  ├── ScanViewModel
+  ├── Repository layer
+  ├── Room local history
+  └── Firebase Authentication
+             |
+             | Authenticated HTTPS
+             v
+       Backend API
+         ├── Authentication verification
+         ├── Authorization and rate limiting
+         ├── Input validation
+         ├── Gemini API client
+         ├── Structured response validation
+         ├── Evidence engine
+         └── Privacy-safe telemetry
+                    |
+                    ├── Secret Manager
+                    ├── Trusted evidence catalog
+                    └── Optional cloud data store
+
+Use Room for local data where offline access is required. Introduce cloud synchronization only if the product requires it and its access controls, retention rules, and privacy implications have been designed.
+
+Do not add Firestore or another database merely to make the architecture look production-grade. Every external service adds operational and security responsibilities.
+
+---
+
+6. Step-by-Step Remediation Plan
+
+Phase 0 — Establish a reliable baseline
+
+Tasks
+
+- Record the exact Git commit being audited.
+- Create a dedicated remediation branch.
+- Confirm the JDK and Gradle wrapper requirements.
+- Build the current project without changing the code.
+- Run unit tests and lint.
+- Save baseline output and list all existing failures.
+- Check for accidentally committed credentials.
+
+Deliverables
+
+- Baseline build report.
+- Baseline test report.
+- Initial defect register.
+- Reproducible development environment.
+
+Exit gate: The team knows what currently builds, what fails, and which failures existed before remediation.
+
+Phase 1 — Correct unsafe scan behavior
+
+Tasks
+
+- Remove positive safety defaults.
+- Add explicit status and verdict states.
+- Disable synthetic-image fallback in production.
+- Make capture and analysis failures visible.
+- Prevent incomplete scans from reaching a verified report.
+- Add regression tests.
+
+Exit gate: No known failure path produces a verified-safe result.
+
+Phase 2 — Secure authentication and AI access
+
+Tasks
+
+- Implement a trusted backend.
+- Move Gemini access and secrets server-side.
+- Add request validation, authorization, rate limits, and timeouts.
+- Replace local password handling with an identity provider.
+- Remove secret-bearing logs and rotate exposed credentials.
+
+Exit gate: Security-sensitive operations are enforced on the server, not trusted to the client.
+
+Phase 3 — Validate evidence and model output
+
+Tasks
+
+- Define the structured AI response schema.
+- Reject invalid or incomplete responses.
+- Implement evidence provenance and validation.
+- Test allergen matching, unknown ingredients, and conflicting evidence.
+- Separate model-generated descriptions from verified conclusions.
+- Review all alternative-product recommendations.
+
+Exit gate: Every final verdict is traceable to the evidence and rules that support it.
+
+Phase 4 — Protect data and harden state management
+
+Tasks
+
+- Add Room migrations.
+- Remove destructive migration fallback.
+- Correct stale-response and duplicate-request handling.
+- Audit backup rules and file-provider paths.
+- Review data retention and deletion.
+
+Exit gate: Data survives supported upgrades and concurrent scan operations do not corrupt displayed results.
+
+Phase 5 — Automated verification and production release
+
+Tasks
+
+- Add CI quality gates.
+- Run all automated tests.
+- Conduct security and privacy review.
+- Test on representative physical devices.
+- Generate and verify a signed release artifact.
+- Complete Play Store privacy, data-safety, and listing requirements.
+- Release to a limited internal or closed-testing group before wider distribution.
+
+Exit gate: All P0 issues are closed, P1 release blockers are resolved, and release evidence is recorded.
+
+---
+
+7. Definition of Done for Each Bug
+
+Every remediation ticket must include:
+
+1. Bug ID: Unique identifier, such as PS-001.
+2. Affected file and symbol: Exact file path and class/function.
+3. Reproduction: Steps that reliably trigger the defect.
+4. Expected behavior: What the app should do.
+5. Actual behavior: What the current build does.
+6. Root cause: Evidence-backed explanation.
+7. Implementation: Minimal code change and any migration requirements.
+8. Regression test: Automated test that would fail before the fix.
+9. Verification: Actual command, device, and test result.
+10. Risk assessment: Whether the change affects user data, authentication, privacy, or safety claims.
+11. Review: Diff reviewed and no unrelated changes included.
+12. Status: Open, in progress, blocked, or verified.
+
+A ticket must not be marked verified merely because an AI coding tool generated code or because the code appears plausible.
+
+---
+
+8. Required Release Checklist
+
+Foundation
+
+- [ ] Current baseline commit recorded.
+- [ ] Clean build succeeds.
+- [ ] Gradle unit tests pass.
+- [ ] Android lint passes or documented exceptions are reviewed.
+- [ ] Package identity and SDK configuration are confirmed.
+
+Scan correctness
+
+- [ ] No positive default verdict.
+- [ ] Camera failures cannot generate successful scans.
+- [ ] Synthetic samples are clearly separated from production scans.
+- [ ] AI failures produce a controlled error or inconclusive state.
+- [ ] Stale responses cannot overwrite a newer scan.
+- [ ] Reports cannot present unvalidated conclusions as verified.
+
+Security and privacy
+
+- [ ] No privileged Gemini key embedded in the release app.
+- [ ] Authentication provider and server authorization tested.
+- [ ] Rate limits and request validation implemented.
+- [ ] Production logging reviewed.
+- [ ] Backup and FileProvider settings reviewed.
+- [ ] Sensitive data retention and deletion documented.
+- [ ] Dependencies and secrets scanned.
+
+Evidence quality
+
+- [ ] Unknown ingredients remain unknown.
+- [ ] Allergen tests cover positive and negative cases.
+- [ ] Evidence source, date, and jurisdiction are represented where relevant.
+- [ ] Unsupported AI citations cannot appear as verified evidence.
+- [ ] Alternative recommendations follow the same validation rules.
+
+Reliability and release
+
+- [ ] Room migrations tested from supported versions.
+- [ ] Offline, timeout, retry, and cancellation cases tested.
+- [ ] Physical-device testing completed.
+- [ ] Crash reporting and cost monitoring configured.
+- [ ] Signed release artifact verified.
+- [ ] Internal or closed testing completed.
+- [ ] Rollback and incident-response instructions prepared.
+
+Release rule: Do not ship while any P0 item remains unresolved.
+
+---
+
+9. Engineering Tools
+
+Tool| Purpose
+Android Studio| Build, debugger, Logcat, profiler, emulator
+Gradle wrapper| Reproducible builds and test execution
+JUnit and AndroidX Test| Unit and instrumented tests
+Compose UI testing| UI state and interaction regression tests
+Firebase Authentication| Managed identity
+Cloud Run or Cloud Functions| Secured backend API
+Google Cloud Secret Manager| Server-side secrets
+Firebase Crashlytics| Crash reporting
+GitHub Actions| CI build and test gates
+OWASP MASVS / MASTG| Mobile security assessment
+MobSF| Supplementary mobile application security analysis
+Google Play Console| Controlled testing and release management
+
+Official references:
+
+- Android Studio: https://developer.android.com/studio
+- Android testing: https://developer.android.com/studio/test
+- Firebase Authentication: https://firebase.google.com/docs/auth/android/start
+- Cloud Run: https://cloud.google.com/run/docs
+- Secret Manager: https://cloud.google.com/secret-manager/docs
+- Crashlytics: https://firebase.google.com/docs/crashlytics
+- GitHub Actions: https://docs.github.com/actions
+- OWASP MASVS: https://mas.owasp.org/MASVS/
+- OWASP MASTG: https://mas.owasp.org/MASTG/
+- Google Play Console: https://play.google.com/console/about/
+
+---
+
+10. Final Engineering Recommendation
+
+Do not begin by rewriting the whole application or adding more AI features. Preserve the existing working architecture where possible and remediate the highest-risk paths in small, reviewable changes.
+
+The recommended order is:
+
+1. Establish the baseline.
+2. Eliminate false-safe and synthetic-fallback risks.
+3. Secure authentication and Gemini access.
+4. Validate evidence and AI output.
+5. Protect database integrity and personal information.
+6. Expand tests and establish CI.
+7. Complete release hardening and controlled testing.
+
+This document is the remediation specification. It is not evidence that the fixes have already been implemented or that PureScan has passed production testing. Each acceptance criterion must be supported by actual code changes and recorded verification results before the corresponding issue is closed.

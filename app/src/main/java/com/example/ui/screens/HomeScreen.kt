@@ -161,17 +161,24 @@ fun HomeScreen(viewModel: ScanViewModel) {
                     )
                 }
 
-                IconButton(
-                    onClick = { showThemeSelectorDialog = true },
-                    modifier = Modifier
-                        .size(44.dp)
-                        .testTag("home_notifications_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Notifications,
-                        contentDescription = "Notifications & Appearance",
-                        tint = SmokyBlack
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    com.example.ui.components.LanguageSelectorPill(
+                        selectedLanguage = uiState.selectedLanguage,
+                        onClick = { viewModel.setShowLanguageDialog(true) }
                     )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    IconButton(
+                        onClick = { showThemeSelectorDialog = true },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .testTag("home_notifications_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Notifications,
+                            contentDescription = "Notifications & Appearance",
+                            tint = SmokyBlack
+                        )
+                    }
                 }
             }
 
@@ -188,7 +195,7 @@ fun HomeScreen(viewModel: ScanViewModel) {
                 },
                 placeholder = {
                     Text(
-                        text = "Search products or ingredients...",
+                        text = com.example.ui.util.AppLocalization.searchPlaceholder(uiState.selectedLanguage),
                         color = OliveDrabMuted,
                         fontSize = 14.5.sp
                     )
@@ -256,7 +263,7 @@ fun HomeScreen(viewModel: ScanViewModel) {
 
                         Column {
                             Text(
-                                text = "Scan a Product",
+                                text = com.example.ui.util.AppLocalization.scanProductTitle(uiState.selectedLanguage),
                                 style = MaterialTheme.typography.titleLarge.copy(
                                     fontFamily = FontFamily.Serif,
                                     fontWeight = FontWeight.Bold,
@@ -266,12 +273,13 @@ fun HomeScreen(viewModel: ScanViewModel) {
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Tap to scan barcode or\ningredient label",
+                                text = com.example.ui.util.AppLocalization.scanProductSubtitle(uiState.selectedLanguage),
                                 style = MaterialTheme.typography.bodySmall.copy(
-                                    fontSize = 12.5.sp,
-                                    lineHeight = 16.sp
+                                    fontSize = 12.sp,
+                                    lineHeight = 15.5.sp
                                 ),
-                                color = OnScanOrange.copy(alpha = 0.85f)
+                                color = OnScanOrange.copy(alpha = 0.9f),
+                                modifier = Modifier.testTag("home_scan_instruction_text")
                             )
                         }
 
@@ -380,7 +388,47 @@ fun HomeScreen(viewModel: ScanViewModel) {
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // P1 First-Use Journey Link: "How PureScan works & what it cannot verify"
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(SurfaceCream)
+                    .border(1.dp, CardBorder.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                    .clickable { viewModel.setShowHowItWorksDialog(true) }
+                    .padding(horizontal = 14.dp, vertical = 9.dp)
+                    .testTag("home_how_it_works_link"),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lightbulb,
+                        contentDescription = null,
+                        tint = ScanOrange,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = com.example.ui.util.AppLocalization.howItWorksLink(uiState.selectedLanguage),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = SmokyBlack
+                    )
+                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    tint = OliveDrab,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
         // 4. Single Horizontal Row of 4 Minimalist Quick-Action Cards (History, My Lists, Safety Tips, Settings)
@@ -391,28 +439,28 @@ fun HomeScreen(viewModel: ScanViewModel) {
             ) {
                 QuickActionTile(
                     modifier = Modifier.weight(1f),
-                    title = "History",
+                    title = com.example.ui.util.AppLocalization.historyTab(uiState.selectedLanguage),
                     icon = Icons.Default.History,
                     testTag = "quick_action_scan_history",
                     onClick = { viewModel.navigateTo(Screen.History) }
                 )
                 QuickActionTile(
                     modifier = Modifier.weight(1f),
-                    title = "My Lists",
+                    title = com.example.ui.util.AppLocalization.savedTab(uiState.selectedLanguage),
                     icon = Icons.Default.Bookmark,
                     testTag = "quick_action_my_lists",
                     onClick = { viewModel.navigateTo(Screen.Saved) }
                 )
                 QuickActionTile(
                     modifier = Modifier.weight(1f),
-                    title = "Safety Tips",
+                    title = com.example.ui.util.AppLocalization.safetyTipsLabel(uiState.selectedLanguage),
                     icon = Icons.Default.Lightbulb,
                     testTag = "quick_action_safety_tips",
                     onClick = { showSafetyTipsDialog = true }
                 )
                 QuickActionTile(
                     modifier = Modifier.weight(1f),
-                    title = "Settings",
+                    title = com.example.ui.util.AppLocalization.settingsLabel(uiState.selectedLanguage),
                     icon = Icons.Default.Settings,
                     testTag = "quick_action_settings",
                     onClick = { viewModel.navigateTo(Screen.Preferences) }
@@ -480,6 +528,21 @@ fun HomeScreen(viewModel: ScanViewModel) {
             }
         }
         }
+    }
+
+    if (uiState.showLanguageDialog) {
+        com.example.ui.components.LanguageSelectorDialog(
+            selectedLanguage = uiState.selectedLanguage,
+            onSelectLanguage = { viewModel.setAppLanguage(it) },
+            onDismiss = { viewModel.setShowLanguageDialog(false) }
+        )
+    }
+
+    if (uiState.showHowItWorksDialog) {
+        com.example.ui.components.HowItWorksDialog(
+            language = uiState.selectedLanguage,
+            onDismiss = { viewModel.setShowHowItWorksDialog(false) }
+        )
     }
 
     // Theme & Outdoor Readability Selector Modal Dialog

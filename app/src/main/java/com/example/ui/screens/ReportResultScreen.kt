@@ -136,24 +136,41 @@ fun ReportResultScreen(viewModel: ScanViewModel) {
     }
 
     val isSaved = savedScans.any { it.id == report.scanId }
-    val gemini = remember(report) {
-        report.geminiInsight ?: GeminiService.generateFallbackInsight(report.correctedText, report.category)
+    val gemini = remember(report, uiState.selectedLanguage) {
+        val raw = report.geminiInsight ?: GeminiService.generateFallbackInsight(
+            report.correctedText,
+            report.category,
+            languageCode = uiState.selectedLanguage.code
+        )
+        GeminiService.localizeInsightForLanguage(raw, uiState.selectedLanguage.code)
     }
 
     var showShareModal by remember { mutableStateOf(false) }
     var inspectedFinding by remember { mutableStateOf<ReportFinding?>(null) }
     var inspectedIngredient by remember { mutableStateOf<ParsedIngredient?>(null) }
 
+    if (uiState.showLanguageDialog) {
+        com.example.ui.components.LanguageSelectorDialog(
+            selectedLanguage = uiState.selectedLanguage,
+            onSelectLanguage = { viewModel.setAppLanguage(it) },
+            onDismiss = { viewModel.setShowLanguageDialog(false) }
+        )
+    }
+
     if (!uiState.showFullProductDetails) {
         // SCREENS 6, 7, 8: Verdict Result Summary Screen
         VerdictSummaryView(
             report = report,
             gemini = gemini,
+            language = uiState.selectedLanguage,
+            onLanguageClick = { viewModel.setShowLanguageDialog(true) },
             onBackClick = { viewModel.navigateTo(Screen.Home) },
             onShareClick = { showShareModal = true },
             onViewDetailsClick = { viewModel.setShowFullProductDetails(true) },
             onCompareClick = { viewModel.navigateTo(Screen.CompareProducts) },
-            onEditTextClick = { viewModel.editCurrentReportText() }
+            onEditTextClick = { viewModel.editCurrentReportText() },
+            onReanalyzeOcrText = { viewModel.reanalyzeCurrentReportWithText(it) },
+            onInspectIngredient = { inspectedIngredient = it }
         )
     } else {
         // SCREEN 9: Product Details Screen (Overview, Ingredients, Safety, Sources)
@@ -171,133 +188,13 @@ fun ReportResultScreen(viewModel: ScanViewModel) {
         )
     }
 
-    // Share & PDF Export Modal Sheet (Visual Scorecard PNG, Formatted Text Report, and PDF)
+    // Share Summary Modal (Visual Infographic Card PNG, Clipboard Copy, Messaging Text, and System Share Sheet)
     if (showShareModal) {
-        ModalBottomSheet(
-            onDismissRequest = { showShareModal = false },
-            sheetState = rememberModalBottomSheetState(),
-            containerColor = FloralWhite
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 12.dp)
-            ) {
-                Text(
-                    text = "Share or Export Report",
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontFamily = FontFamily.Serif,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = SmokyBlack
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "Share a visual safety scorecard image, formatted text summary, or full PDF dossier via messaging and social apps.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = OliveDrab
-                )
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Button(
-                    onClick = {
-                        showShareModal = false
-                        PdfExportHelper.exportAndShareVisualScorecard(
-                            context = context,
-                            report = report,
-                            gemini = gemini,
-                            onError = { viewModel.showToast(it) }
-                        )
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("share_visual_scorecard_button"),
-                    shape = RoundedCornerShape(25.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = ScanOrange,
-                        contentColor = OnScanOrange
-                    )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Share Visual Safety Scorecard (PNG)",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                OutlinedButton(
-                    onClick = {
-                        showShareModal = false
-                        PdfExportHelper.shareProductTextFinding(
-                            context = context,
-                            report = report,
-                            gemini = gemini
-                        )
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("share_social_text_button"),
-                    shape = RoundedCornerShape(25.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SmokyBlack)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Share Formatted Text Report",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                OutlinedButton(
-                    onClick = {
-                        showShareModal = false
-                        PdfExportHelper.exportAndShareSingleReportPdf(
-                            context = context,
-                            report = report,
-                            gemini = gemini,
-                            onError = { viewModel.showToast(it) }
-                        )
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("export_single_pdf_button"),
-                    shape = RoundedCornerShape(25.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SmokyBlack)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PictureAsPdf,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Export as PDF Report",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-            }
-        }
+        com.example.ui.components.ShareSummaryModal(
+            report = report,
+            gemini = gemini,
+            onDismiss = { showShareModal = false }
+        )
     }
 
     // Modal Sheet: In-depth Finding Evidence
@@ -480,14 +377,19 @@ fun ReportResultScreen(viewModel: ScanViewModel) {
 private fun VerdictSummaryView(
     report: ScanReport,
     gemini: GeminiIngredientInsight,
+    language: com.example.ui.util.AppLanguage = com.example.ui.util.AppLanguage.ENGLISH,
+    onLanguageClick: () -> Unit = {},
     onBackClick: () -> Unit,
     onShareClick: () -> Unit,
     onViewDetailsClick: () -> Unit,
     onCompareClick: () -> Unit = {},
-    onEditTextClick: () -> Unit = {}
+    onEditTextClick: () -> Unit = {},
+    onReanalyzeOcrText: (String) -> Unit = {},
+    onInspectIngredient: ((ParsedIngredient) -> Unit)? = null
 ) {
     val tier = gemini.safetyTier.uppercase()
-    val isSafe = tier == "SAFE"
+    val hasUnverifiedTokens = report.unmatchedIngredients.isNotEmpty()
+    val isSafe = tier == "SAFE" && !hasUnverifiedTokens
     val isHighRisk = tier == "HIGH_RISK"
 
     Column(
@@ -497,7 +399,7 @@ private fun VerdictSummaryView(
             .testTag("report_result_screen"),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Top App Bar: Back arrow on left, Share icon on right
+        // Top App Bar: Back arrow on left, Language Selector + Share icon on right
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -516,15 +418,22 @@ private fun VerdictSummaryView(
                 )
             }
 
-            IconButton(
-                onClick = onShareClick,
-                modifier = Modifier.testTag("share_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Share,
-                    contentDescription = "Share or Export PDF",
-                    tint = SmokyBlack
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                com.example.ui.components.LanguageSelectorPill(
+                    selectedLanguage = language,
+                    onClick = onLanguageClick
                 )
+                Spacer(modifier = Modifier.width(6.dp))
+                IconButton(
+                    onClick = onShareClick,
+                    modifier = Modifier.testTag("share_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Share or Export PDF",
+                        tint = SmokyBlack
+                    )
+                }
             }
         }
 
@@ -589,10 +498,15 @@ private fun VerdictSummaryView(
                         Spacer(modifier = Modifier.height(16.dp))
 
                         Text(
-                            text = when {
-                                isHighRisk -> "High Risk /\nPossible Harmful\nIngredients"
-                                !isSafe -> "Use with Caution"
-                                else -> "This Product\nAppears Safe"
+                            text = if (language != com.example.ui.util.AppLanguage.ENGLISH) {
+                                gemini.headline
+                            } else {
+                                when {
+                                    isHighRisk -> "High Risk /\nPossible Harmful\nIngredients"
+                                    hasUnverifiedTokens && tier == "SAFE" -> "Inconclusive —\nUnverified Tokens"
+                                    !isSafe -> "Use with Caution"
+                                    else -> "Compatible with\nYour Selected Rules"
+                                }
                             },
                             style = MaterialTheme.typography.headlineLarge.copy(
                                 fontWeight = FontWeight.Bold,
@@ -666,7 +580,55 @@ private fun VerdictSummaryView(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // P0 & Section 4 UX Review: 4-Question Clinical Trust & Evidence Summary Card
+                val matchedRuleSummaries = remember(report.preferenceNotes, gemini.allergensDetected) {
+                    if (report.preferenceNotes.isNotEmpty()) {
+                        report.preferenceNotes.map { "${it.triggeredIngredient} → ${it.prefLabel}: ${it.note}" }
+                    } else {
+                        gemini.allergensDetected
+                    }
+                }
+                val citationSummaries = remember(gemini.groundingCitations, report.findings) {
+                    if (gemini.groundingCitations.isNotEmpty()) {
+                        gemini.groundingCitations.map { "${it.agency}: ${it.title} — ${it.summary}" }
+                    } else {
+                        report.findings.map { "${it.sourceOrg}: ${it.ingredientName} (${it.evidenceStrength})" }
+                    }
+                }
+
+                com.example.ui.components.TrustResultSummaryCard(
+                    recognizedCount = report.ingredients.size.coerceAtLeast(gemini.ingredientBreakdowns.size),
+                    ocrConfidence = gemini.ocrConfidence,
+                    matchedRules = matchedRuleSummaries,
+                    regulatoryNotes = citationSummaries,
+                    language = language,
+                    onReviewOcrClick = onEditTextClick
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val categorizedEntries = remember(report, gemini) {
+                    com.example.ui.components.categorizeReportIngredients(report, gemini)
+                }
+                val possibleDerivatives = remember(categorizedEntries) {
+                    categorizedEntries
+                        .filter { it.matchCertainty == com.example.ui.util.MatchCertainty.POSSIBLE_DERIVATIVE_MATCH }
+                        .map { it.displayName }
+                        .distinct()
+                }
+
+                com.example.ui.components.UncertaintyFindingsBanner(
+                    unmatchedTokens = report.unmatchedIngredients.map { it.rawText },
+                    possibleDerivativeTokens = possibleDerivatives,
+                    ocrConfidence = gemini.ocrConfidence,
+                    currentIngredientsText = report.correctedText,
+                    onReanalyzeOcrText = onReanalyzeOcrText,
+                    onOpenFullTextEditor = onEditTextClick
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
             }
 
             // Personal Allergen Alert Banner if triggered
@@ -829,11 +791,12 @@ private fun VerdictSummaryView(
                     Spacer(modifier = Modifier.height(14.dp))
                 }
 
-                // Material 3 Categorized Ingredient Cards ('Safe', 'Warning', 'High Hazard')
+                // Material 3 Categorized Ingredient Cards ('Safe', 'Warning', 'High Hazard') with Rule Badges, Certainty Tags & Expandable Citations
                 com.example.ui.components.CategorizedIngredientResultsSection(
                     report = report,
                     gemini = gemini,
-                    defaultShowInlineToxicology = true
+                    defaultShowInlineToxicology = true,
+                    onInspectIngredient = onInspectIngredient
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -875,17 +838,18 @@ private fun VerdictSummaryView(
             }
         }
 
-        // Bottom Primary Pill Button: "View Full Details" / "View Details" (Screens 11, 12, 13)
-        Box(
+        // Bottom Actions: "View Full Details" & "Share Summary Report"
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 20.dp)
+                .padding(horizontal = 24.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
                 onClick = onViewDetailsClick,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(54.dp)
+                    .height(50.dp)
                     .testTag("view_details_button"),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -897,8 +861,32 @@ private fun VerdictSummaryView(
                     text = if (isSafe) "View Full Details" else "View Details",
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
+                        fontSize = 15.sp
                     )
+                )
+            }
+
+            OutlinedButton(
+                onClick = onShareClick,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+                    .testTag("share_report_button"),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = SmokyBlack
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Share,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Share Summary Report",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }

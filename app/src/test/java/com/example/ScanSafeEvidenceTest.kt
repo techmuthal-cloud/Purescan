@@ -256,6 +256,242 @@ class ScanSafeEvidenceTest {
         assertTrue(safe.any { it.displayName.contains("Water", ignoreCase = true) || it.displayName.contains("Glycerin", ignoreCase = true) })
         assertTrue(categorized.all { it.casNumber.isNotBlank() && it.toxicologyMechanism.isNotBlank() })
     }
+
+    @Test
+    fun allergyFilter_flagsGlutenNutsAndParabensAccurately() {
+        val sampleText = "Water, Hydrolyzed Wheat Protein, Sweet Almond Oil, Methylparaben"
+        val activePrefs = listOf(
+            com.example.data.local.PreferenceSettingEntity(
+                key = "pref_gluten",
+                label = "Gluten / Wheat Derivatives",
+                description = "Flag hydrolyzed wheat protein",
+                category = "allergen",
+                isEnabled = true
+            ),
+            com.example.data.local.PreferenceSettingEntity(
+                key = "pref_tree_nuts",
+                label = "Tree Nut & Peanut Allergens",
+                description = "Flag almond and peanut",
+                category = "allergen",
+                isEnabled = true
+            ),
+            com.example.data.local.PreferenceSettingEntity(
+                key = "pref_paraben_free",
+                label = "Paraben-Free",
+                description = "Flag methylparaben",
+                category = "cosmetic",
+                isEnabled = true
+            )
+        )
+
+        val report = EvidenceEngine.analyzeIngredients(
+            productTitle = "Gentle Nourishing Lotion",
+            category = "Skin Care",
+            region = "GLOBAL",
+            rawOcrText = sampleText,
+            correctedText = sampleText,
+            activePreferences = activePrefs,
+            customAllergens = emptyList()
+        )
+
+        val wheatItem = report.ingredients.first { it.rawText.contains("Wheat", ignoreCase = true) }
+        val almondItem = report.ingredients.first { it.rawText.contains("Almond", ignoreCase = true) }
+        val parabenItem = report.ingredients.first { it.rawText.contains("Methylparaben", ignoreCase = true) }
+
+        assertNotNull(wheatItem.matchedAllergenName)
+        assertTrue(wheatItem.matchedAllergenName!!.contains("Gluten", ignoreCase = true))
+
+        assertNotNull(almondItem.matchedAllergenName)
+        assertTrue(almondItem.matchedAllergenName!!.contains("Nut", ignoreCase = true))
+
+        assertNotNull(parabenItem.matchedAllergenName)
+        assertTrue(parabenItem.matchedAllergenName!!.contains("Paraben", ignoreCase = true))
+
+        assertTrue(report.findings.any { it.sourceOrg == "PureScan Allergy Filter" })
+    }
+
+    @Test
+    fun reportShareUtil_generatesFormattedTextWithAllergenAlerts() {
+        val sampleText = "Water, Hydrolyzed Wheat Protein, Glycerin"
+        val activePrefs = listOf(
+            com.example.data.local.PreferenceSettingEntity(
+                key = "pref_gluten",
+                label = "Gluten / Wheat Derivatives",
+                description = "Flag wheat",
+                category = "allergen",
+                isEnabled = true
+            )
+        )
+
+        val report = EvidenceEngine.analyzeIngredients(
+            productTitle = "Botanical Conditioner",
+            category = "Hair Care",
+            region = "US",
+            rawOcrText = sampleText,
+            correctedText = sampleText,
+            activePreferences = activePrefs,
+            customAllergens = emptyList()
+        )
+        val gemini = com.example.data.api.GeminiService.generateFallbackInsight(
+            ingredientsText = sampleText,
+            category = "Hair Care",
+            userAllergens = listOf("Gluten / Wheat"),
+            highRiskAllergens = listOf("Gluten / Wheat")
+        )
+
+        val shareText = com.example.util.ReportShareUtil.generateShareableText(report, gemini)
+
+        assertTrue(shareText.contains("PURESCAN PRODUCT SAFETY REPORT"))
+        assertTrue(shareText.contains("Botanical Conditioner"))
+        assertTrue(shareText.contains("PERSONAL ALLERGEN ALERT"))
+        assertTrue(shareText.contains("Gluten"))
+        assertTrue(shareText.contains("#PureScan"))
+    }
+
+    @Test
+    fun scanEntity_defaultsToUnknownVerdictAndPendingStatus() {
+        val defaultScan = com.example.data.local.ScanEntity(
+            id = "pending-scan-1",
+            title = "Unverified Capture",
+            category = "Skin Care",
+            regionCode = "US"
+        )
+        assertEquals(0, defaultScan.safetyScore)
+        assertEquals("UNKNOWN", defaultScan.safetyTier)
+        assertEquals(com.example.data.local.ScanStatus.PENDING.name, defaultScan.scanStatus)
+        assertEquals(com.example.data.local.SafetyVerdict.UNKNOWN.name, defaultScan.safetyVerdict)
+    }
+
+    @Test
+    fun appLanguage_supportsAllEightLanguagesAndLocalizesGeminiInsights() {
+        val allLanguages = com.example.ui.util.AppLanguage.entries
+        assertEquals(8, allLanguages.size)
+        val expectedCodes = setOf("en", "es", "fr", "de", "hi", "ar", "ja", "pt")
+        assertEquals(expectedCodes, allLanguages.map { it.code }.toSet())
+
+        allLanguages.forEach { lang ->
+            val scanTitle = com.example.ui.util.AppLocalization.scanProductTitle(lang)
+            val scanSubtitle = com.example.ui.util.AppLocalization.scanProductSubtitle(lang)
+            assertTrue(scanTitle.isNotBlank())
+            assertTrue(scanSubtitle.isNotBlank())
+        }
+
+        val spanishInsight = com.example.data.api.GeminiService.generateFallbackInsight(
+            ingredientsText = "Aqua, Glycerin, Prunus Amygdalus Dulcis (Sweet Almond) Oil",
+            category = "Skin Care",
+            userAllergens = listOf("Sweet Almond"),
+            highRiskAllergens = listOf("Sweet Almond"),
+            languageCode = "es"
+        )
+        assertEquals("HIGH_RISK", spanishInsight.safetyTier)
+        assertTrue(spanishInsight.headline.contains("Alto Riesgo", ignoreCase = true))
+        assertTrue(spanishInsight.scientificExplanation.contains("[Informe en Español]"))
+    }
+
+    @Test
+    fun analyzeCameraXTextWithProfile_respectsRoomRuleClassificationAndReasonNote() = kotlinx.coroutines.runBlocking {
+        val cameraText = "Aqua, Glycerin, Parfum, Hydrolyzed Wheat Protein"
+        val prefs = listOf(
+            com.example.data.local.PreferenceSettingEntity(
+                key = "pref_fragrance_free",
+                label = "Fragrance / Parfum",
+                description = "Flag synthetic parfum",
+                category = "fragrance",
+                isEnabled = true,
+                ruleClassification = "PERSONAL_SENSITIVITY",
+                userReasonNote = "Triggers facial redness"
+            ),
+            com.example.data.local.PreferenceSettingEntity(
+                key = "pref_gluten",
+                label = "Gluten & Wheat",
+                description = "Flag wheat proteins",
+                category = "dietary",
+                isEnabled = true,
+                ruleClassification = "MEDICAL_ALLERGY",
+                userReasonNote = "Diagnosed celiac allergy"
+            )
+        )
+
+        val insight = com.example.data.api.GeminiService.analyzeCameraXTextWithProfile(
+            cameraXExtractedText = cameraText,
+            category = "Skin Care",
+            region = "US",
+            preferences = prefs,
+            customAllergens = emptyList(),
+            languageCode = "en"
+        )
+
+        assertEquals("HIGH_RISK", insight.safetyTier)
+        val wheatItem = insight.ingredientBreakdowns.first { it.name.contains("Wheat", ignoreCase = true) }
+        val parfumItem = insight.ingredientBreakdowns.first { it.name.contains("Parfum", ignoreCase = true) }
+        assertEquals("HIGH_RISK", wheatItem.riskLevel)
+        assertTrue(wheatItem.regulatoryNote.contains("Medical Allergy", ignoreCase = true))
+        assertTrue(wheatItem.regulatoryNote.contains("Diagnosed celiac allergy", ignoreCase = true))
+        assertEquals("CAUTION", parfumItem.riskLevel)
+        assertTrue(parfumItem.regulatoryNote.contains("Personal Sensitivity", ignoreCase = true))
+    }
+
+    @Test
+    fun categorizeReportIngredients_assignsMatchCertaintyRuleClassificationAndUncertaintyStates() {
+        val sampleText = "Water, Methylparaben, Prunus Amygdalus Dulcis (Sweet Almond) Oil, MysteryBotanicalTokenXYZ"
+        val customAllergens = listOf(
+            com.example.data.local.CustomAllergenEntity(
+                name = "Methylparaben",
+                isEnabled = true,
+                severityLevel = "HIGH_RISK",
+                ruleClassification = "MEDICAL_ALLERGY",
+                notes = "Severe contact dermatitis"
+            )
+        )
+        val prefs = listOf(
+            com.example.data.local.PreferenceSettingEntity(
+                key = "pref_tree_nuts",
+                label = "Tree Nuts & Peanuts",
+                description = "Flag tree nuts",
+                category = "dietary",
+                isEnabled = true,
+                ruleClassification = "PERSONAL_SENSITIVITY",
+                userReasonNote = "Avoid almond oil derivatives"
+            )
+        )
+
+        val report = EvidenceEngine.analyzeIngredients(
+            productTitle = "Test Botanical Serum",
+            category = "Skin Care",
+            region = "US",
+            rawOcrText = sampleText,
+            correctedText = sampleText,
+            activePreferences = prefs,
+            customAllergens = customAllergens
+        )
+        val gemini = com.example.data.api.GeminiService.generateFallbackInsight(
+            ingredientsText = sampleText,
+            category = "Skin Care",
+            userAllergens = listOf("Methylparaben", "Tree Nuts & Peanuts"),
+            highRiskAllergens = listOf("Methylparaben")
+        )
+
+        val entries = com.example.ui.components.categorizeReportIngredients(report, gemini)
+        assertEquals(4, entries.size)
+
+        val waterEntry = entries.first { it.displayName.contains("Water", ignoreCase = true) }
+        assertEquals(com.example.ui.util.MatchCertainty.DETECTED_NO_RULE_MATCH, waterEntry.matchCertainty)
+        assertEquals(false, waterEntry.isUncertainOrUnverified)
+
+        val parabenEntry = entries.first { it.displayName.contains("Methylparaben", ignoreCase = true) }
+        assertEquals(com.example.ui.util.MatchCertainty.CONFIRMED_RULE_MATCH, parabenEntry.matchCertainty)
+        assertEquals("Medical Allergy", parabenEntry.ruleClassificationLabel)
+
+        val almondEntry = entries.first { it.displayName.contains("Almond", ignoreCase = true) }
+        assertEquals(com.example.ui.util.MatchCertainty.POSSIBLE_DERIVATIVE_MATCH, almondEntry.matchCertainty)
+        assertTrue(almondEntry.isUncertainOrUnverified)
+
+        val mysteryEntry = entries.first { it.rawLabelText == "MysteryBotanicalTokenXYZ" }
+        assertEquals(com.example.ui.util.MatchCertainty.EVIDENCE_INSUFFICIENT, mysteryEntry.matchCertainty)
+        assertTrue(mysteryEntry.isUncertainOrUnverified)
+        assertEquals("Unverified Label Token", mysteryEntry.ruleClassificationLabel)
+    }
 }
+
 
 

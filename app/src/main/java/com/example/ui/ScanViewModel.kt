@@ -5,9 +5,11 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.catalog.SampleLabel
+import com.example.data.local.AllergenProfileEntity
 import com.example.data.local.AppDatabase
 import com.example.data.local.PreferenceSettingEntity
 import com.example.data.local.ScanEntity
+import com.example.data.local.ScanStatus
 import com.example.data.model.BatchQueueItem
 import com.example.data.model.BatchScanSummary
 import com.example.data.model.ParsedIngredient
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import com.example.ui.theme.ThemeMode
+import com.example.ui.util.AppLanguage
 import com.example.ui.util.HapticsManager
 import java.util.UUID
 
@@ -38,6 +41,7 @@ sealed class Screen {
     object History : Screen()
     object Saved : Screen()
     object Preferences : Screen()
+    object AllergenSettings : Screen()
     object Profile : Screen()
     object CompareProducts : Screen()
     object Glossary : Screen()
@@ -91,7 +95,13 @@ data class ScanUiState(
     val batchTotalCount: Int = 0,
     val returnToBatchReport: Boolean = false,
     val compareLeftScanId: String? = null,
-    val compareRightScanId: String? = null
+    val compareRightScanId: String? = null,
+    val captureStatus: ScanStatus = ScanStatus.PENDING,
+    val captureErrorMessage: String? = null,
+    val activeScanJobId: String? = null,
+    val selectedLanguage: AppLanguage = AppLanguage.ENGLISH,
+    val showLanguageDialog: Boolean = false,
+    val showHowItWorksDialog: Boolean = false
 )
 
 class ScanViewModel(application: Application) : AndroidViewModel(application) {
@@ -106,6 +116,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_OUTDOOR_MODE = "outdoor_mode"
         const val KEY_HAPTICS_ENABLED = "haptics_enabled"
+        const val KEY_APP_LANGUAGE = "app_language"
     }
 
     private val authPrefs = application.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
@@ -128,6 +139,12 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     val customAllergens: StateFlow<List<com.example.data.local.CustomAllergenEntity>> = repository.allCustomAllergens
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val allergenProfiles: StateFlow<List<AllergenProfileEntity>> = repository.allAllergenProfiles
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val activeAllergenProfile: StateFlow<AllergenProfileEntity?> = repository.activeAllergenProfile
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     private fun createInitialAuthState(): ScanUiState {
         val isLoggedIn = authPrefs.getBoolean(KEY_IS_LOGGED_IN, false)
         val savedName = authPrefs.getString(KEY_USER_NAME, "Priya Sharma") ?: "Priya Sharma"
@@ -138,6 +155,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         val savedTheme = runCatching { ThemeMode.valueOf(savedThemeStr) }.getOrDefault(ThemeMode.LIGHT)
         val savedOutdoor = authPrefs.getBoolean(KEY_OUTDOOR_MODE, false)
         val savedHaptics = authPrefs.getBoolean(KEY_HAPTICS_ENABLED, true)
+        val savedLangCode = authPrefs.getString(KEY_APP_LANGUAGE, AppLanguage.ENGLISH.code) ?: AppLanguage.ENGLISH.code
+        val savedLang = AppLanguage.fromCode(savedLangCode)
         HapticsManager.isEnabled = savedHaptics
 
         // When user is already logged in, open directly to Main Home page on startup!
@@ -151,6 +170,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             themeMode = savedTheme,
             outdoorMode = savedOutdoor,
             hapticsEnabled = savedHaptics,
+            selectedLanguage = savedLang,
             isDataLoading = false
         )
     }
@@ -392,6 +412,36 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         navigateTo(Screen.TextReview)
     }
 
+    fun reanalyzeCurrentReportWithText(updatedText: String) {
+        val current = _uiState.value.currentReport ?: return
+        val cleaned = updatedText.trim()
+        if (cleaned.isBlank()) {
+            showToast("Ingredient text cannot be empty")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                editableText = cleaned,
+                captureStatus = ScanStatus.PROCESSING
+            )
+            val updatedReport = repository.processAndSaveScan(
+                productTitle = current.productTitle,
+                category = current.category,
+                region = current.region,
+                rawOcrText = current.rawOcrText,
+                correctedText = cleaned,
+                languageCode = _uiState.value.selectedLanguage.code
+            )
+            HapticsManager.triggerAnalysisSuccess(getApplication())
+            _uiState.value = _uiState.value.copy(
+                currentReport = updatedReport,
+                editableText = updatedReport.correctedText,
+                captureStatus = ScanStatus.COMPLETED
+            )
+            showToast("Re-analyzed ${updatedReport.ingredients.size} ingredients with updated OCR text")
+        }
+    }
+
     fun queueCurrentScanOffline() {
         val text = _uiState.value.editableText.trim()
         if (text.isBlank()) {
@@ -448,7 +498,41 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         startAnalysis()
     }
 
+    fun onCaptureStarted() {
+        _uiState.value = _uiState.value.copy(
+            captureStatus = ScanStatus.CAPTURING,
+            captureErrorMessage = null
+        )
+    }
+
+    fun onCaptureFailed(reason: String) {
+        HapticsManager.triggerErrorState(getApplication())
+        _uiState.value = _uiState.value.copy(
+            captureStatus = ScanStatus.FAILED,
+            captureErrorMessage = reason
+        )
+    }
+
+    fun clearCaptureError() {
+        _uiState.value = _uiState.value.copy(
+            captureStatus = ScanStatus.PENDING,
+            captureErrorMessage = null
+        )
+    }
+
     fun onRealPhotoCapturedOrPicked(bitmap: android.graphics.Bitmap) {
+        if (_uiState.value.captureStatus == ScanStatus.PROCESSING &&
+            _uiState.value.currentScreen == Screen.AnalysisProgress
+        ) {
+            return
+        }
+
+        val jobId = UUID.randomUUID().toString()
+        _uiState.value = _uiState.value.copy(
+            captureStatus = ScanStatus.PROCESSING,
+            captureErrorMessage = null,
+            activeScanJobId = jobId
+        )
         navigateTo(Screen.AnalysisProgress)
 
         viewModelScope.launch {
@@ -460,8 +544,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
             val report = repository.processAndSaveImageScan(
                 bitmap = bitmap,
-                region = _uiState.value.region
+                region = _uiState.value.region,
+                languageCode = _uiState.value.selectedLanguage.code
             )
+
+            if (_uiState.value.activeScanJobId != null && _uiState.value.activeScanJobId != jobId) {
+                return@launch
+            }
 
             _uiState.value = _uiState.value.copy(analysisStep = 4)
             delay(300) // Step 4: Calculating results
@@ -476,6 +565,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 currentReport = report,
                 showFullProductDetails = false,
                 scanQuotaUsed = newQuota,
+                captureStatus = ScanStatus.COMPLETED,
+                activeScanJobId = null,
                 currentScreen = Screen.ReportResult
             )
         }
@@ -483,17 +574,23 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
     fun extractAndReviewFromBitmap(bitmap: android.graphics.Bitmap) {
         viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                captureStatus = ScanStatus.PROCESSING,
+                captureErrorMessage = null
+            )
             val activeAllergens = customAllergens.value.filter { it.isEnabled }.map { it.name }
             val extraction = com.example.data.api.GeminiService.extractAndAnalyzeFromImage(
                 bitmap = bitmap,
                 region = _uiState.value.region,
-                userAllergens = activeAllergens
+                userAllergens = activeAllergens,
+                languageCode = _uiState.value.selectedLanguage.code
             )
             _uiState.value = _uiState.value.copy(
                 productTitle = extraction.productTitle,
                 category = extraction.category,
                 rawOcrText = extraction.extractedIngredientsText,
-                editableText = extraction.extractedIngredientsText
+                editableText = extraction.extractedIngredientsText,
+                captureStatus = ScanStatus.PENDING
             )
             navigateTo(Screen.TextReview)
         }
@@ -501,7 +598,18 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startAnalysis() {
         if (_uiState.value.editableText.isBlank()) return
+        if (_uiState.value.captureStatus == ScanStatus.PROCESSING &&
+            _uiState.value.currentScreen == Screen.AnalysisProgress
+        ) {
+            return
+        }
 
+        val jobId = UUID.randomUUID().toString()
+        _uiState.value = _uiState.value.copy(
+            captureStatus = ScanStatus.PROCESSING,
+            captureErrorMessage = null,
+            activeScanJobId = jobId
+        )
         navigateTo(Screen.AnalysisProgress)
 
         viewModelScope.launch {
@@ -517,8 +625,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 category = _uiState.value.category,
                 region = _uiState.value.region,
                 rawOcrText = _uiState.value.rawOcrText.ifBlank { _uiState.value.editableText },
-                correctedText = _uiState.value.editableText
+                correctedText = _uiState.value.editableText,
+                languageCode = _uiState.value.selectedLanguage.code
             )
+
+            if (_uiState.value.activeScanJobId != null && _uiState.value.activeScanJobId != jobId) {
+                return@launch
+            }
 
             _uiState.value = _uiState.value.copy(analysisStep = 4)
             delay(300) // Step 4: Calculating results
@@ -530,6 +643,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 currentReport = report,
                 showFullProductDetails = false,
                 scanQuotaUsed = newQuota,
+                captureStatus = ScanStatus.COMPLETED,
+                activeScanJobId = null,
                 currentScreen = Screen.ReportResult
             )
         }
@@ -721,9 +836,25 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addCustomAllergen(name: String, severityLevel: String = "HIGH_RISK") {
+    fun updatePreferenceRuleDetails(
+        key: String,
+        ruleClassification: String,
+        userReasonNote: String
+    ) {
         viewModelScope.launch {
-            repository.addCustomAllergen(name, severityLevel)
+            HapticsManager.triggerSelectionTap(getApplication())
+            repository.updatePreferenceRuleDetails(key, ruleClassification, userReasonNote)
+            showToast("Updated allergen rule & reason note")
+        }
+    }
+
+    fun addCustomAllergen(
+        name: String,
+        severityLevel: String = "HIGH_RISK",
+        ruleClassification: String = if (severityLevel.equals("HIGH_RISK", ignoreCase = true)) "MEDICAL_ALLERGY" else "PERSONAL_SENSITIVITY"
+    ) {
+        viewModelScope.launch {
+            repository.addCustomAllergen(name, severityLevel, ruleClassification)
             showToast("Added \"$name\" to Allergy Filter")
         }
     }
@@ -746,8 +877,60 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             HapticsManager.triggerSelectionTap(getApplication())
             repository.updateCustomAllergenSeverity(id, nextSeverity)
-            val label = if (nextSeverity == "HIGH_RISK") "High-Risk Escalation" else "Caution Warning + Highlight"
+            val label = if (nextSeverity == "HIGH_RISK") "Medical Allergy (High Risk)" else "Personal Sensitivity (Caution)"
             showToast("Allergen rule set to $label")
+        }
+    }
+
+    fun updateCustomAllergenDetails(
+        id: String,
+        severityLevel: String,
+        ruleClassification: String
+    ) {
+        viewModelScope.launch {
+            HapticsManager.triggerSelectionTap(getApplication())
+            repository.updateCustomAllergenDetails(id, severityLevel, ruleClassification)
+            showToast("Updated custom allergen classification")
+        }
+    }
+
+    fun saveCurrentAsAllergenProfile(profileName: String, description: String = "") {
+        val trimmedName = profileName.trim()
+        if (trimmedName.isBlank()) {
+            showToast("Enter a profile name")
+            return
+        }
+        viewModelScope.launch {
+            val enabledKeys = preferences.value.filter { it.isEnabled }.map { it.key }
+            val activeTriggers = customAllergens.value.filter { it.isEnabled }.map { it.name }
+            val resolvedDesc = description.trim().ifBlank {
+                "${enabledKeys.size} standard rules • ${activeTriggers.size} custom triggers"
+            }
+            repository.saveUserAllergenProfile(
+                profileName = trimmedName,
+                description = resolvedDesc,
+                enabledPreferenceKeys = enabledKeys,
+                customTriggers = activeTriggers,
+                activateImmediately = true
+            )
+            HapticsManager.triggerSelectionTap(getApplication())
+            showToast("Saved & activated profile \"$trimmedName\"")
+        }
+    }
+
+    fun activateAllergenProfile(profileId: String) {
+        viewModelScope.launch {
+            HapticsManager.triggerSelectionTap(getApplication())
+            repository.activateAllergenProfile(profileId)
+            val name = allergenProfiles.value.firstOrNull { it.id == profileId }?.profileName ?: "Allergen Profile"
+            showToast("Activated profile: $name")
+        }
+    }
+
+    fun deleteAllergenProfile(profileId: String) {
+        viewModelScope.launch {
+            repository.deleteAllergenProfile(profileId)
+            showToast("Deleted allergen profile")
         }
     }
 
@@ -829,6 +1012,24 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             HapticsManager.triggerSelectionTap(getApplication())
         }
         showToast(if (enabled) "Subtle Haptic Feedback ON" else "Subtle Haptic Feedback OFF")
+    }
+
+    fun setAppLanguage(language: AppLanguage) {
+        authPrefs.edit().putString(KEY_APP_LANGUAGE, language.code).apply()
+        HapticsManager.triggerSelectionTap(getApplication())
+        _uiState.value = _uiState.value.copy(
+            selectedLanguage = language,
+            showLanguageDialog = false
+        )
+        showToast("Language set to ${language.nativeName} (${language.englishName})")
+    }
+
+    fun setShowLanguageDialog(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showLanguageDialog = show)
+    }
+
+    fun setShowHowItWorksDialog(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showHowItWorksDialog = show)
     }
 
     fun setDataLoading(loading: Boolean) {

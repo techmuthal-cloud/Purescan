@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -22,19 +23,27 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -56,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.api.GeminiIngredientInsight
 import com.example.data.api.RegulatoryGroundingCitation
 import com.example.data.model.FindingType
+import com.example.data.model.MatchStatus
 import com.example.data.model.ParsedIngredient
 import com.example.data.model.ScanReport
 import com.example.data.model.Severity
@@ -64,6 +74,7 @@ import com.example.ui.theme.CardBorder
 import com.example.ui.theme.CardSurface
 import com.example.ui.theme.FloralWhite
 import com.example.ui.theme.OliveDrab
+import com.example.ui.theme.OliveDrabDark
 import com.example.ui.theme.OliveDrabMuted
 import com.example.ui.theme.OnScanOrange
 import com.example.ui.theme.ScanOrange
@@ -75,6 +86,9 @@ import com.example.ui.theme.SemanticSuccess
 import com.example.ui.theme.SemanticSuccessBg
 import com.example.ui.theme.SmokyBlack
 import com.example.ui.theme.SurfaceCream
+import com.example.ui.util.AppLanguage
+import com.example.ui.util.AppLocalization
+import com.example.ui.util.MatchCertainty
 
 enum class IngredientHazardCategory(
     val key: String,
@@ -87,7 +101,7 @@ enum class IngredientHazardCategory(
     HIGH_HAZARD(
         key = "HIGH_HAZARD",
         label = "High Hazard",
-        subtitle = "Restricted compounds, potent sensitizers, or personal High Risk allergens",
+        subtitle = "Restricted compounds, potent sensitizers, or confirmed Medical Allergy matches",
         indicatorColor = SemanticCritical,
         containerBg = SemanticCriticalBg,
         icon = Icons.Default.Error
@@ -95,7 +109,7 @@ enum class IngredientHazardCategory(
     WARNING(
         key = "WARNING",
         label = "Warning",
-        subtitle = "Moderate irritation potential, concentration limits, or caution allergens",
+        subtitle = "Moderate irritation potential, concentration limits, Sensitivities, or Avoidances",
         indicatorColor = SemanticCaution,
         containerBg = SemanticCautionBg,
         icon = Icons.Default.Warning
@@ -119,6 +133,10 @@ data class CategorizedIngredientEntry(
     val safetyExplanation: String,
     val matchedAllergenName: String? = null,
     val isHighRiskAllergen: Boolean = false,
+    val ruleClassificationLabel: String? = null,
+    val personalReasonNote: String? = null,
+    val matchCertainty: MatchCertainty = MatchCertainty.DETECTED_NO_RULE_MATCH,
+    val isUncertainOrUnverified: Boolean = false,
     val casNumber: String,
     val bioavailabilityNote: String,
     val toxicologyMechanism: String,
@@ -130,7 +148,8 @@ data class CategorizedIngredientEntry(
 
 /**
  * Deterministically merges EvidenceEngine parsed ingredients, user Allergy Filter matches,
- * and Google Gemini API ingredient breakdowns into categorized 'Safe', 'Warning', and 'High Hazard' entries.
+ * and Google Gemini API ingredient breakdowns into categorized entries with explicit
+ * MatchCertainty and 3-tier Rule Classification metadata.
  */
 fun categorizeReportIngredients(
     report: ScanReport,
@@ -138,6 +157,7 @@ fun categorizeReportIngredients(
 ): List<CategorizedIngredientEntry> {
     val breakdownMap = gemini.ingredientBreakdowns.associateBy { it.name.trim().lowercase() }
     val findingsByIng = report.findings.groupBy { it.ingredientName.trim().lowercase() }
+    val prefNoteByIng = report.preferenceNotes.associateBy { it.triggeredIngredient.trim().lowercase() }
 
     val entriesFromParsed = report.ingredients.mapIndexed { index, parsed ->
         val canonical = parsed.canonicalIngredient
@@ -154,14 +174,54 @@ fun categorizeReportIngredients(
 
         val matchingFindings = (findingsByIng[lookupKey].orEmpty() + findingsByIng[rawKey].orEmpty()).distinctBy { it.id }
 
+        val matchedPrefNote = prefNoteByIng[lookupKey]
+            ?: prefNoteByIng[rawKey]
+            ?: report.preferenceNotes.firstOrNull { note ->
+                lookupKey.contains(note.triggeredIngredient.trim().lowercase()) ||
+                    rawKey.contains(note.triggeredIngredient.trim().lowercase())
+            }
+
         val allergenName = parsed.matchedAllergenName
+            ?: matchedPrefNote?.prefLabel
             ?: gemini.allergensDetected.firstOrNull { detected ->
                 val clean = detected.substringBefore("(").trim()
                 clean.isNotBlank() && (displayName.contains(clean, ignoreCase = true) || parsed.rawText.contains(clean, ignoreCase = true))
             }
 
         val isHighRiskAllergen = parsed.allergenSeverity == Severity.CRITICAL ||
-            matchingFindings.any { it.findingType == FindingType.ALLERGEN_ALERT && it.severity == Severity.CRITICAL }
+            matchingFindings.any { it.findingType == FindingType.ALLERGEN_ALERT && it.severity == Severity.CRITICAL } ||
+            breakdown?.regulatoryNote?.contains("Medical Allergy", ignoreCase = true) == true
+
+        val isUnverifiedToken = parsed.matchStatus == MatchStatus.UNMATCHED && canonical == null
+
+        val isDerivativeMatch = allergenName != null && (
+            displayName.contains("extract", ignoreCase = true) ||
+                displayName.contains("oil", ignoreCase = true) ||
+                displayName.contains("hydrolyzed", ignoreCase = true) ||
+                displayName.contains("derivative", ignoreCase = true)
+            ) && !displayName.equals(allergenName, ignoreCase = true)
+
+        val matchCertainty = when {
+            allergenName != null && isDerivativeMatch -> MatchCertainty.POSSIBLE_DERIVATIVE_MATCH
+            allergenName != null -> MatchCertainty.CONFIRMED_RULE_MATCH
+            isUnverifiedToken -> MatchCertainty.EVIDENCE_INSUFFICIENT
+            else -> MatchCertainty.DETECTED_NO_RULE_MATCH
+        }
+
+        val ruleClassificationLabel = when {
+            allergenName != null && isHighRiskAllergen -> "Medical Allergy"
+            allergenName != null && (
+                matchedPrefNote?.note?.contains("Avoidance", ignoreCase = true) == true ||
+                    breakdown?.regulatoryNote?.contains("Preference Avoidance", ignoreCase = true) == true
+                ) -> "Preference Avoidance"
+            allergenName != null -> "Personal Sensitivity"
+            matchingFindings.any { it.findingType == FindingType.REGULATORY_RESTRICTION } -> "Regulatory Restriction"
+            isUnverifiedToken -> "Unverified Label Token"
+            else -> null
+        }
+
+        val personalReasonNote = matchedPrefNote?.note
+            ?: matchingFindings.firstOrNull { it.findingType == FindingType.ALLERGEN_ALERT }?.explanation
 
         val category = when {
             isHighRiskAllergen -> IngredientHazardCategory.HIGH_HAZARD
@@ -184,13 +244,19 @@ fun categorizeReportIngredients(
 
         val role = breakdown?.role?.takeIf { it.isNotBlank() }
             ?: canonical?.category?.takeIf { it.isNotBlank() }
-            ?: "Formulation Component"
+            ?: if (isUnverifiedToken) "Unverified OCR Token" else "Formulation Component"
 
         val explanation = when {
             allergenName != null -> buildString {
-                append("Flagged by your personal Allergy Filter ($allergenName). ")
-                append(breakdown?.regulatoryNote ?: primaryFinding?.explanation ?: canonical?.description ?: "Avoid topical or dietary exposure if sensitized.")
+                val tierName = ruleClassificationLabel ?: "Personal Rule"
+                append("Matched your $tierName rule ($allergenName). ")
+                if (!personalReasonNote.isNullOrBlank()) {
+                    append("$personalReasonNote ")
+                } else {
+                    append(breakdown?.regulatoryNote ?: primaryFinding?.explanation ?: canonical?.description ?: "Avoid exposure based on your selected rule.")
+                }
             }
+            isUnverifiedToken -> "Token '${parsed.rawText}' was transcribed from the label but is not matched in the canonical INCI catalog. Absence of a match does not guarantee safety—tap to review or correct OCR spelling."
             primaryFinding != null -> primaryFinding.explanation
             breakdown != null && breakdown.regulatoryNote.isNotBlank() -> breakdown.regulatoryNote
             canonical != null -> canonical.description
@@ -199,7 +265,7 @@ fun categorizeReportIngredients(
 
         val cas = breakdown?.casNumber?.takeIf { it.isNotBlank() }
             ?: canonical?.casNumber?.takeIf { it.isNotBlank() }
-            ?: "Verified INCI Record"
+            ?: if (isUnverifiedToken) "Unverified (Pending OCR Check)" else "Verified INCI Record"
 
         val bioavailability = breakdown?.bioavailabilityNote?.takeIf { it.isNotBlank() }
             ?: canonical?.dermalBioavailability?.takeIf { it.isNotBlank() }
@@ -226,6 +292,10 @@ fun categorizeReportIngredients(
             safetyExplanation = explanation,
             matchedAllergenName = allergenName,
             isHighRiskAllergen = isHighRiskAllergen,
+            ruleClassificationLabel = ruleClassificationLabel,
+            personalReasonNote = personalReasonNote,
+            matchCertainty = matchCertainty,
+            isUncertainOrUnverified = isUnverifiedToken || matchCertainty == MatchCertainty.POSSIBLE_DERIVATIVE_MATCH,
             casNumber = cas,
             bioavailabilityNote = bioavailability,
             toxicologyMechanism = mechanism,
@@ -247,6 +317,8 @@ fun categorizeReportIngredients(
             "CAUTION", "WARNING" -> IngredientHazardCategory.WARNING
             else -> IngredientHazardCategory.SAFE
         }
+        val isRuleMatch = bItem.regulatoryNote.contains("Confirmed match to your rule", ignoreCase = true) ||
+            bItem.regulatoryNote.contains("ALLERGEN MATCH", ignoreCase = true)
         CategorizedIngredientEntry(
             id = "gemini_${index}_${bItem.name.lowercase().replace(" ", "_")}",
             displayName = bItem.name,
@@ -254,6 +326,13 @@ fun categorizeReportIngredients(
             category = cat,
             functionalRole = bItem.role,
             safetyExplanation = bItem.regulatoryNote,
+            ruleClassificationLabel = when {
+                bItem.role.contains("Medical Allergy", ignoreCase = true) -> "Medical Allergy"
+                bItem.role.contains("Personal Sensitivity", ignoreCase = true) -> "Personal Sensitivity"
+                bItem.role.contains("Preference Avoidance", ignoreCase = true) -> "Preference Avoidance"
+                else -> null
+            },
+            matchCertainty = if (isRuleMatch) MatchCertainty.CONFIRMED_RULE_MATCH else MatchCertainty.DETECTED_NO_RULE_MATCH,
             casNumber = bItem.casNumber,
             bioavailabilityNote = bItem.bioavailabilityNote,
             toxicologyMechanism = bItem.toxicologyMechanism,
@@ -264,9 +343,386 @@ fun categorizeReportIngredients(
 }
 
 /**
+ * Dedicated Uncertainty & Inconclusive Findings Banner with Unverified Token Chips
+ * and an Inline OCR Text Editor that allows users to correct label text and re-analyze on the spot.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun UncertaintyFindingsBanner(
+    unmatchedTokens: List<String>,
+    possibleDerivativeTokens: List<String>,
+    ocrConfidence: Int,
+    currentIngredientsText: String,
+    onReanalyzeOcrText: (String) -> Unit,
+    onOpenFullTextEditor: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val hasUnverified = unmatchedTokens.isNotEmpty()
+    val hasLowConfidence = ocrConfidence in 1..84
+    val hasDerivatives = possibleDerivativeTokens.isNotEmpty()
+    val hasUncertainty = hasUnverified || hasLowConfidence || hasDerivatives
+
+    var showInlineOcrEditor by remember { mutableStateOf(hasUnverified || hasLowConfidence) }
+    var editedOcrText by remember(currentIngredientsText) { mutableStateOf(currentIngredientsText) }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("uncertainty_findings_banner"),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (hasUncertainty) SemanticCautionBg else SurfaceCream
+        ),
+        border = BorderStroke(
+            width = 1.5.dp,
+            color = if (hasUncertainty) SemanticCaution.copy(alpha = 0.55f) else CardBorder
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (hasUncertainty) SemanticCaution.copy(alpha = 0.18f)
+                                else OliveDrab.copy(alpha = 0.14f)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (hasUncertainty) Icons.Default.HelpOutline else Icons.Default.VerifiedUser,
+                            contentDescription = null,
+                            tint = if (hasUncertainty) SemanticCaution else OliveDrab,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = when {
+                                hasUnverified -> "Inconclusive / Unverified Tokens (${unmatchedTokens.size})"
+                                hasDerivatives -> "Possible Botanical Derivative Cross-Reactivity"
+                                hasLowConfidence -> "Low OCR Confidence ($ocrConfidence%) — Verify Text"
+                                else -> "OCR Evidence Verification ($ocrConfidence% Confidence)"
+                            },
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            ),
+                            color = SmokyBlack
+                        )
+                        Text(
+                            text = if (hasUncertainty) {
+                                "Unrecognized or derivative tokens cannot be guaranteed safe. Tap a chip or edit OCR text below to re-analyze."
+                            } else {
+                                "All recognized tokens matched the canonical INCI catalog. You can still inspect or edit the transcribed label text."
+                            },
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 11.5.sp,
+                                lineHeight = 16.sp
+                            ),
+                            color = OliveDrabDark
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                OutlinedButton(
+                    onClick = { showInlineOcrEditor = !showInlineOcrEditor },
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.testTag("toggle_inline_ocr_editor_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = null,
+                        tint = SmokyBlack,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (showInlineOcrEditor) "Hide OCR" else "Edit OCR",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SmokyBlack
+                    )
+                }
+            }
+
+            // Unverified Token Chips & Possible Derivative Chips
+            if (unmatchedTokens.isNotEmpty() || possibleDerivativeTokens.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                FlowRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("uncertainty_token_chips_row"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    unmatchedTokens.forEach { token ->
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color.White,
+                            border = BorderStroke(1.dp, SemanticCaution),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { showInlineOcrEditor = true }
+                                .testTag("unverified_token_chip_$token")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = SemanticCaution,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "Unverified: $token",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SmokyBlack
+                                )
+                            }
+                        }
+                    }
+
+                    possibleDerivativeTokens.forEach { derivative ->
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color.White,
+                            border = BorderStroke(1.dp, OliveDrab),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { showInlineOcrEditor = true }
+                                .testTag("derivative_token_chip_$derivative")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Science,
+                                    contentDescription = null,
+                                    tint = OliveDrab,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "Possible Derivative: $derivative",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = SmokyBlack
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Expandable Inline OCR Label Editor
+            AnimatedVisibility(visible = showInlineOcrEditor) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                        .testTag("inline_ocr_editor_container")
+                ) {
+                    HorizontalDivider(color = CardBorder.copy(alpha = 0.7f))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = "Inline OCR Ingredient List Editor",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = SmokyBlack
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Correct any misread or truncated ingredient names below and tap Re-Analyze to update this report immediately.",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        color = OliveDrab
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedTextField(
+                        value = editedOcrText,
+                        onValueChange = { editedOcrText = it },
+                        label = { Text("Recognized Ingredient Label Text") },
+                        minLines = 2,
+                        maxLines = 5,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("inline_ocr_editor_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = SmokyBlack,
+                            unfocusedTextColor = SmokyBlack,
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = Color.White,
+                            focusedBorderColor = ScanOrange,
+                            unfocusedBorderColor = CardBorder
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                onReanalyzeOcrText(editedOcrText)
+                                showInlineOcrEditor = false
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("inline_ocr_reanalyze_button"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = ScanOrange,
+                                contentColor = OnScanOrange
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Re-Analyze Corrected Text",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = onOpenFullTextEditor,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.testTag("inline_ocr_full_editor_button")
+                        ) {
+                            Text(
+                                text = "Full Editor",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = SmokyBlack
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Unified Product Scan Result UI Component displaying:
+ * 1. Analysis Status & Clinical Trust Summary Card
+ * 2. Dedicated Uncertainty Banner with unverified token chips & inline OCR editor
+ * 3. Interactive Categorized Ingredient Cards with Rule Classification Badges, Match Certainty Tags,
+ *    evidence-backed matching rules, and expandable regulatory citations.
+ */
+@Composable
+fun ProductScanResultComponent(
+    report: ScanReport,
+    gemini: GeminiIngredientInsight,
+    language: AppLanguage = AppLanguage.ENGLISH,
+    onReanalyzeOcrText: (String) -> Unit,
+    onOpenFullTextEditor: () -> Unit,
+    onInspectIngredient: ((ParsedIngredient) -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val entries = remember(report, gemini) {
+        categorizeReportIngredients(report, gemini)
+    }
+
+    val unmatchedTokens = remember(report.unmatchedIngredients, entries) {
+        (report.unmatchedIngredients.map { it.rawText } + entries.filter { it.matchCertainty == MatchCertainty.EVIDENCE_INSUFFICIENT }.map { it.rawLabelText })
+            .distinct()
+    }
+
+    val possibleDerivativeTokens = remember(entries) {
+        entries.filter { it.matchCertainty == MatchCertainty.POSSIBLE_DERIVATIVE_MATCH }
+            .map { it.displayName }
+            .distinct()
+    }
+
+    val matchedRuleSummaries = remember(report.preferenceNotes, entries, gemini.allergensDetected) {
+        val fromEntries = entries.filter { it.matchedAllergenName != null }.map { entry ->
+            val badge = entry.ruleClassificationLabel ?: "Personal Rule"
+            val reason = entry.personalReasonNote?.takeIf { it.isNotBlank() } ?: entry.safetyExplanation
+            "${entry.displayName} → [$badge: ${entry.matchedAllergenName}] $reason"
+        }
+        when {
+            fromEntries.isNotEmpty() -> fromEntries
+            report.preferenceNotes.isNotEmpty() -> report.preferenceNotes.map { "${it.triggeredIngredient} → ${it.prefLabel}: ${it.note}" }
+            else -> gemini.allergensDetected
+        }
+    }
+
+    val citationSummaries = remember(gemini.groundingCitations, report.findings) {
+        if (gemini.groundingCitations.isNotEmpty()) {
+            gemini.groundingCitations.map { "${it.agency}: ${it.title} — ${it.summary}" }
+        } else {
+            report.findings.map { "${it.sourceOrg}: ${it.ingredientName} (${it.evidenceStrength})" }
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("product_scan_result_component"),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // 1. Clinical Evidence & Analysis Status Summary Card
+        TrustResultSummaryCard(
+            recognizedCount = report.ingredients.size.coerceAtLeast(gemini.ingredientBreakdowns.size),
+            ocrConfidence = gemini.ocrConfidence,
+            matchedRules = matchedRuleSummaries,
+            regulatoryNotes = citationSummaries,
+            language = language,
+            onReviewOcrClick = onOpenFullTextEditor
+        )
+
+        // 2. Dedicated Uncertainty Banner with Unverified Token Chips & Inline OCR Editor
+        UncertaintyFindingsBanner(
+            unmatchedTokens = unmatchedTokens,
+            possibleDerivativeTokens = possibleDerivativeTokens,
+            ocrConfidence = gemini.ocrConfidence,
+            currentIngredientsText = report.correctedText,
+            onReanalyzeOcrText = onReanalyzeOcrText,
+            onOpenFullTextEditor = onOpenFullTextEditor
+        )
+
+        // 3. Interactive Categorized Ingredient Insights with Rule Badges, Certainty Tags & Expandable Citations
+        CategorizedIngredientResultsSection(
+            report = report,
+            gemini = gemini,
+            defaultShowInlineToxicology = false,
+            onInspectIngredient = onInspectIngredient
+        )
+    }
+}
+
+/**
  * Material 3 visual component displaying scanned product results categorized by
  * 'Safe', 'Warning', and 'High Hazard' with color-coded indicators, filter pills,
- * allergen match tags, functional roles, and inline toxicology/CAS/citation details.
+ * 3-tier Rule Classification badges, Match Certainty tags, and expandable citations.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -284,6 +740,7 @@ fun CategorizedIngredientResultsSection(
     val highHazardEntries = remember(entries) { entries.filter { it.category == IngredientHazardCategory.HIGH_HAZARD } }
     val warningEntries = remember(entries) { entries.filter { it.category == IngredientHazardCategory.WARNING } }
     val safeEntries = remember(entries) { entries.filter { it.category == IngredientHazardCategory.SAFE } }
+    val uncertainEntries = remember(entries) { entries.filter { it.isUncertainOrUnverified } }
 
     var selectedFilter by remember { mutableStateOf("ALL") }
     var showAllToxicologyInline by remember { mutableStateOf(defaultShowInlineToxicology) }
@@ -309,7 +766,10 @@ fun CategorizedIngredientResultsSection(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Science,
                             contentDescription = null,
@@ -319,7 +779,7 @@ fun CategorizedIngredientResultsSection(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "Gemini AI Hazard & Allergen Matrix",
+                                text = "Ingredient Insights & Rule Evidence",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontFamily = FontFamily.Serif,
                                     fontWeight = FontWeight.Bold,
@@ -328,7 +788,7 @@ fun CategorizedIngredientResultsSection(
                                 color = SmokyBlack
                             )
                             Text(
-                                text = "${entries.size} ingredients categorized by Safe, Warning & High Hazard",
+                                text = "${entries.size} ingredients • Rule classifications, certainty tags & citations",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = OliveDrabMuted
                             )
@@ -345,7 +805,7 @@ fun CategorizedIngredientResultsSection(
                             .testTag("toggle_inline_toxicology_button")
                     ) {
                         Text(
-                            text = if (showAllToxicologyInline) "Full Data: ON" else "Compact",
+                            text = if (showAllToxicologyInline) "Citations: Expanded" else "Expand Citations",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = SmokyBlack,
@@ -395,7 +855,7 @@ fun CategorizedIngredientResultsSection(
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
-                // Interactive Category Filter Pills with Live Counts
+                // Interactive Category & Certainty Filter Pills with Live Counts
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -429,46 +889,67 @@ fun CategorizedIngredientResultsSection(
                         testTag = "category_filter_safe",
                         onClick = { selectedFilter = IngredientHazardCategory.SAFE.key }
                     )
+                    if (uncertainEntries.isNotEmpty()) {
+                        CategoryFilterPill(
+                            label = "Uncertain (${uncertainEntries.size})",
+                            selected = selectedFilter == "UNCERTAIN",
+                            dotColor = SemanticCaution,
+                            testTag = "category_filter_uncertain",
+                            onClick = { selectedFilter = "UNCERTAIN" }
+                        )
+                    }
                 }
             }
         }
 
-        // 1. HIGH HAZARD Material 3 Category Card
-        if (selectedFilter == "ALL" || selectedFilter == IngredientHazardCategory.HIGH_HAZARD.key) {
-            if (highHazardEntries.isNotEmpty() || selectedFilter == IngredientHazardCategory.HIGH_HAZARD.key) {
-                Material3HazardCategoryGroupCard(
-                    category = IngredientHazardCategory.HIGH_HAZARD,
-                    entries = highHazardEntries,
-                    showInlineToxicology = showAllToxicologyInline,
-                    onInspectIngredient = onInspectIngredient,
-                    testTag = "category_card_high_hazard"
-                )
+        if (selectedFilter == "UNCERTAIN") {
+            Material3HazardCategoryGroupCard(
+                category = IngredientHazardCategory.WARNING,
+                customTitle = "Uncertain & Unverified Findings",
+                customSubtitle = "Ingredients with insufficient catalog evidence or possible botanical cross-reactivity",
+                entries = uncertainEntries,
+                showInlineToxicology = showAllToxicologyInline,
+                onInspectIngredient = onInspectIngredient,
+                testTag = "category_card_uncertain"
+            )
+        } else {
+            // 1. HIGH HAZARD Material 3 Category Card
+            if (selectedFilter == "ALL" || selectedFilter == IngredientHazardCategory.HIGH_HAZARD.key) {
+                if (highHazardEntries.isNotEmpty() || selectedFilter == IngredientHazardCategory.HIGH_HAZARD.key) {
+                    Material3HazardCategoryGroupCard(
+                        category = IngredientHazardCategory.HIGH_HAZARD,
+                        entries = highHazardEntries,
+                        showInlineToxicology = showAllToxicologyInline,
+                        onInspectIngredient = onInspectIngredient,
+                        testTag = "category_card_high_hazard"
+                    )
+                }
             }
-        }
 
-        // 2. WARNING Material 3 Category Card
-        if (selectedFilter == "ALL" || selectedFilter == IngredientHazardCategory.WARNING.key) {
-            if (warningEntries.isNotEmpty() || selectedFilter == IngredientHazardCategory.WARNING.key) {
-                Material3HazardCategoryGroupCard(
-                    category = IngredientHazardCategory.WARNING,
-                    entries = warningEntries,
-                    showInlineToxicology = showAllToxicologyInline,
-                    onInspectIngredient = onInspectIngredient,
-                    testTag = "category_card_warning"
-                )
+            // 2. WARNING Material 3 Category Card
+            if (selectedFilter == "ALL" || selectedFilter == IngredientHazardCategory.WARNING.key) {
+                if (warningEntries.isNotEmpty() || selectedFilter == IngredientHazardCategory.WARNING.key) {
+                    Material3HazardCategoryGroupCard(
+                        category = IngredientHazardCategory.WARNING,
+                        entries = warningEntries,
+                        showInlineToxicology = showAllToxicologyInline,
+                        onInspectIngredient = onInspectIngredient,
+                        testTag = "category_card_warning"
+                    )
+                }
             }
-        }
 
-        // 3. SAFE Material 3 Category Card
-        if (selectedFilter == "ALL" || selectedFilter == IngredientHazardCategory.SAFE.key) {
-            if (safeEntries.isNotEmpty() || selectedFilter == IngredientHazardCategory.SAFE.key) {
-                Material3HazardCategoryGroupCard(
-                    category = IngredientHazardCategory.SAFE,
-                    entries = safeEntries,
-                    showInlineToxicology = showAllToxicologyInline,
-                    onInspectIngredient = onInspectIngredient,
-                    testTag = "category_card_safe"
-                )
+            // 3. SAFE Material 3 Category Card
+            if (selectedFilter == "ALL" || selectedFilter == IngredientHazardCategory.SAFE.key) {
+                if (safeEntries.isNotEmpty() || selectedFilter == IngredientHazardCategory.SAFE.key) {
+                    Material3HazardCategoryGroupCard(
+                        category = IngredientHazardCategory.SAFE,
+                        entries = safeEntries,
+                        showInlineToxicology = showAllToxicologyInline,
+                        onInspectIngredient = onInspectIngredient,
+                        testTag = "category_card_safe"
+                    )
+                }
             }
         }
     }
@@ -518,9 +999,13 @@ private fun Material3HazardCategoryGroupCard(
     entries: List<CategorizedIngredientEntry>,
     showInlineToxicology: Boolean,
     onInspectIngredient: ((ParsedIngredient) -> Unit)?,
-    testTag: String
+    testTag: String,
+    customTitle: String? = null,
+    customSubtitle: String? = null
 ) {
     var expanded by remember { mutableStateOf(true) }
+    val headerTitle = customTitle ?: category.label
+    val headerSubtitle = customSubtitle ?: category.subtitle
 
     Card(
         modifier = Modifier
@@ -556,7 +1041,7 @@ private fun Material3HazardCategoryGroupCard(
                     ) {
                         Icon(
                             imageVector = category.icon,
-                            contentDescription = category.label,
+                            contentDescription = headerTitle,
                             tint = category.indicatorColor,
                             modifier = Modifier.size(20.dp)
                         )
@@ -565,7 +1050,7 @@ private fun Material3HazardCategoryGroupCard(
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = category.label,
+                                text = headerTitle,
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontFamily = FontFamily.Serif,
                                     fontWeight = FontWeight.Bold,
@@ -588,7 +1073,7 @@ private fun Material3HazardCategoryGroupCard(
                             }
                         }
                         Text(
-                            text = category.subtitle,
+                            text = headerSubtitle,
                             style = MaterialTheme.typography.labelSmall,
                             color = OliveDrab,
                             maxLines = 2,
@@ -599,7 +1084,7 @@ private fun Material3HazardCategoryGroupCard(
 
                 Icon(
                     imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = if (expanded) "Collapse ${category.label}" else "Expand ${category.label}",
+                    contentDescription = if (expanded) "Collapse $headerTitle" else "Expand $headerTitle",
                     tint = SmokyBlack
                 )
             }
@@ -618,7 +1103,7 @@ private fun Material3HazardCategoryGroupCard(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "No ingredients in the ${category.label} category for this product.",
+                                text = "No ingredients in the $headerTitle category for this product.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = OliveDrabMuted,
                                 modifier = Modifier.padding(14.dp)
@@ -643,6 +1128,7 @@ private fun Material3HazardCategoryGroupCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CategorizedIngredientMaterialCard(
     entry: CategorizedIngredientEntry,
@@ -663,8 +1149,12 @@ private fun CategorizedIngredientMaterialCard(
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.outlinedCardColors(containerColor = FloralWhite),
         border = BorderStroke(
-            width = if (entry.matchedAllergenName != null || cat == IngredientHazardCategory.HIGH_HAZARD) 1.5.dp else 1.dp,
-            color = if (entry.matchedAllergenName != null) cat.indicatorColor else CardBorder
+            width = if (entry.matchedAllergenName != null || cat == IngredientHazardCategory.HIGH_HAZARD || entry.isUncertainOrUnverified) 1.5.dp else 1.dp,
+            color = when {
+                entry.matchedAllergenName != null -> cat.indicatorColor
+                entry.isUncertainOrUnverified -> SemanticCaution
+                else -> CardBorder
+            }
         )
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -682,7 +1172,7 @@ private fun CategorizedIngredientMaterialCard(
                         modifier = Modifier
                             .size(10.dp)
                             .clip(CircleShape)
-                            .background(cat.indicatorColor)
+                            .background(if (entry.isUncertainOrUnverified && entry.matchedAllergenName == null) SemanticCaution else cat.indicatorColor)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -697,41 +1187,57 @@ private fun CategorizedIngredientMaterialCard(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Color-Coded Category Pill ('Safe', 'Warning', 'High Hazard')
+                // Color-Coded Category Pill ('Safe', 'Warning', 'High Hazard', or 'Uncertain')
+                val pillLabel = if (entry.matchCertainty == MatchCertainty.EVIDENCE_INSUFFICIENT) {
+                    "UNVERIFIED"
+                } else {
+                    cat.label.uppercase()
+                }
+                val pillColor = if (entry.matchCertainty == MatchCertainty.EVIDENCE_INSUFFICIENT) {
+                    SemanticCaution
+                } else {
+                    cat.indicatorColor
+                }
+                val pillBg = if (entry.matchCertainty == MatchCertainty.EVIDENCE_INSUFFICIENT) {
+                    SemanticCautionBg
+                } else {
+                    cat.containerBg
+                }
+
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = cat.containerBg,
-                    border = BorderStroke(1.dp, cat.indicatorColor.copy(alpha = 0.45f))
+                    color = pillBg,
+                    border = BorderStroke(1.dp, pillColor.copy(alpha = 0.45f))
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = cat.icon,
+                            imageVector = if (entry.matchCertainty == MatchCertainty.EVIDENCE_INSUFFICIENT) Icons.Default.HelpOutline else cat.icon,
                             contentDescription = null,
-                            tint = cat.indicatorColor,
+                            tint = pillColor,
                             modifier = Modifier.size(12.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = cat.label.uppercase(),
+                            text = pillLabel,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold,
-                            color = cat.indicatorColor,
+                            color = pillColor,
                             fontSize = 10.sp
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Functional Role Pill + Personal Allergen Match Tag
-            Row(
+            // Classification Badges Row: Functional Role + Rule Classification Badge + Match Certainty Tag
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Surface(
                     shape = RoundedCornerShape(6.dp),
@@ -747,10 +1253,17 @@ private fun CategorizedIngredientMaterialCard(
                     )
                 }
 
-                if (entry.matchedAllergenName != null) {
+                // Rule Classification Badge (Medical Allergy / Personal Sensitivity / Preference Avoidance)
+                if (entry.ruleClassificationLabel != null) {
+                    val ruleColor = when (entry.ruleClassificationLabel) {
+                        "Medical Allergy" -> SemanticCritical
+                        "Personal Sensitivity", "Unverified Label Token" -> SemanticCaution
+                        else -> OliveDrab
+                    }
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = if (entry.isHighRiskAllergen) SemanticCritical else SemanticCaution
+                        color = ruleColor.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, ruleColor.copy(alpha = 0.5f))
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
@@ -759,25 +1272,62 @@ private fun CategorizedIngredientMaterialCard(
                             Icon(
                                 imageVector = Icons.Default.Shield,
                                 contentDescription = null,
-                                tint = Color.White,
+                                tint = ruleColor,
                                 modifier = Modifier.size(11.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "ALLERGEN: ${entry.matchedAllergenName.uppercase()}",
+                                text = entry.ruleClassificationLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                fontSize = 9.5.sp
+                                color = ruleColor,
+                                fontSize = 10.sp
                             )
                         }
+                    }
+                }
+
+                // Explicit Match Certainty Tag
+                val certaintyColor = when (entry.matchCertainty) {
+                    MatchCertainty.CONFIRMED_RULE_MATCH -> SemanticCritical
+                    MatchCertainty.POSSIBLE_DERIVATIVE_MATCH, MatchCertainty.EVIDENCE_INSUFFICIENT -> SemanticCaution
+                    MatchCertainty.DETECTED_NO_RULE_MATCH -> SemanticSuccess
+                }
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = certaintyColor.copy(alpha = 0.1f),
+                    border = BorderStroke(1.dp, certaintyColor.copy(alpha = 0.35f))
+                ) {
+                    Text(
+                        text = entry.matchCertainty.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = certaintyColor,
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+
+                if (entry.matchedAllergenName != null) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (entry.isHighRiskAllergen) SemanticCritical else SemanticCaution
+                    ) {
+                        Text(
+                            text = "RULE: ${entry.matchedAllergenName.uppercase()}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            fontSize = 9.5.sp,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Safety & Hazard Explanation
+            // Evidence-Backed Safety & Rule Match Explanation
             Text(
                 text = entry.safetyExplanation,
                 style = MaterialTheme.typography.bodySmall.copy(
@@ -786,10 +1336,31 @@ private fun CategorizedIngredientMaterialCard(
                 color = SmokyBlack
             )
 
-            // Inline / Expandable Full Toxicology, CAS Number & Regulatory Citations (Option 3)
+            // Expandable Citations CTA Row
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (localExpanded) "Hide Regulatory Citations & CAS Data" else "View Evidence Citations (${entry.regulatoryAuthority})",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = OliveDrab
+                )
+                Icon(
+                    imageVector = if (localExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    tint = OliveDrab,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+
+            // Inline / Expandable Full Toxicology, CAS Number & Regulatory Citations
             AnimatedVisibility(visible = localExpanded) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     HorizontalDivider(color = CardBorder.copy(alpha = 0.65f))
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -830,6 +1401,12 @@ private fun CategorizedIngredientMaterialCard(
                             }
 
                             Text(
+                                text = "Certainty Rationale: ${entry.matchCertainty.explanation}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SmokyBlack
+                            )
+
+                            Text(
                                 text = "Dermal Bioavailability: ${entry.bioavailabilityNote}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = OliveDrab
@@ -842,25 +1419,27 @@ private fun CategorizedIngredientMaterialCard(
                             )
 
                             if (entry.citations.isNotEmpty()) {
-                                val topCitations = entry.citations.take(2).joinToString(" • ") { "${it.agency}: ${it.title}" }
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(top = 2.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.VerifiedUser,
-                                        contentDescription = null,
-                                        tint = OliveDrab,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = topCitations,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = OliveDrabMuted,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                entry.citations.take(2).forEach { citation ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(top = 2.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.VerifiedUser,
+                                            contentDescription = null,
+                                            tint = OliveDrab,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "${citation.agency}: ${citation.title}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = OliveDrabMuted,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }

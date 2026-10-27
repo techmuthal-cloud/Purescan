@@ -54,6 +54,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.rememberModalBottomSheetState
+import com.example.ui.components.AllergenBottomSheet
 import com.example.ui.ScanViewModel
 import com.example.ui.Screen
 import com.example.ui.theme.Bone
@@ -79,6 +81,7 @@ import com.example.ui.theme.SmokyBlack
  *   - Notifications
  *   - Help & Support
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(viewModel: ScanViewModel) {
     BackHandler {
@@ -98,6 +101,7 @@ fun ProfileScreen(viewModel: ScanViewModel) {
     var editedEmail by remember(uiState.userEmail) { mutableStateOf(uiState.userEmail) }
     var quickAllergenInput by remember { mutableStateOf("") }
     var quickAllergenSeverity by remember { mutableStateOf("HIGH_RISK") }
+    var showAllergenBottomSheet by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -105,7 +109,15 @@ fun ProfileScreen(viewModel: ScanViewModel) {
             .background(FloralWhite)
             .testTag("profile_screen")
     ) {
-        // Top Bar: Left Purescan 3D Emblem, Center PURESCAN • Profile, Right Gear icon
+        if (uiState.showLanguageDialog) {
+            com.example.ui.components.LanguageSelectorDialog(
+                selectedLanguage = uiState.selectedLanguage,
+                onSelectLanguage = { viewModel.setAppLanguage(it) },
+                onDismiss = { viewModel.setShowLanguageDialog(false) }
+            )
+        }
+
+        // Top Bar: Left Purescan 3D Emblem, Center PURESCAN • Profile, Right Language Pill + Gear icon
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -124,22 +136,29 @@ fun ProfileScreen(viewModel: ScanViewModel) {
                     primaryTextColor = SmokyBlack
                 )
                 Text(
-                    text = "Profile & Preferences",
+                    text = com.example.ui.util.AppLocalization.profileTab(uiState.selectedLanguage),
                     style = MaterialTheme.typography.labelSmall,
                     color = OliveDrabMuted
                 )
             }
 
-            IconButton(
-                onClick = { viewModel.navigateTo(Screen.Preferences) },
-                modifier = Modifier.testTag("profile_settings_gear_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Settings",
-                    tint = SmokyBlack,
-                    modifier = Modifier.size(22.dp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                com.example.ui.components.LanguageSelectorPill(
+                    selectedLanguage = uiState.selectedLanguage,
+                    onClick = { viewModel.setShowLanguageDialog(true) }
                 )
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(
+                    onClick = { viewModel.navigateTo(Screen.Preferences) },
+                    modifier = Modifier.testTag("profile_settings_gear_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Settings",
+                        tint = SmokyBlack,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
             }
         }
 
@@ -269,6 +288,50 @@ fun ProfileScreen(viewModel: ScanViewModel) {
                             contentDescription = null,
                             tint = SmokyBlack,
                             modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            // Custom Language Selection Card (8 Languages for App UI & Gemini AI Reports)
+            item {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(1.dp, CardBorder, RoundedCornerShape(16.dp))
+                        .clickable { viewModel.setShowLanguageDialog(true) }
+                        .testTag("profile_language_card"),
+                    color = com.example.ui.theme.CardSurface,
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = com.example.ui.util.AppLocalization.languageSelectorTitle(uiState.selectedLanguage),
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    fontFamily = FontFamily.Serif,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp
+                                ),
+                                color = SmokyBlack
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = "${uiState.selectedLanguage.flagEmoji} ${uiState.selectedLanguage.nativeName} (${uiState.selectedLanguage.englishName}) • Tap to choose from 8 languages",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = OliveDrab
+                            )
+                        }
+                        com.example.ui.components.LanguageSelectorPill(
+                            selectedLanguage = uiState.selectedLanguage,
+                            onClick = { viewModel.setShowLanguageDialog(true) }
                         )
                     }
                 }
@@ -664,30 +727,63 @@ fun ProfileScreen(viewModel: ScanViewModel) {
                             }
                         }
 
-                        // Link to Full Allergy Editor
+                        // Link to Full Allergy Editor & Quick Sheet
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(com.example.ui.theme.SurfaceCream)
-                                .clickable { viewModel.navigateTo(Screen.Preferences) }
-                                .padding(horizontal = 12.dp, vertical = 9.dp)
-                                .testTag("profile_open_full_allergy_editor"),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = "Open Full Allergy & Sensitizer Editor",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = SmokyBlack
-                            )
-                            Icon(
-                                imageVector = Icons.Default.ChevronRight,
-                                contentDescription = null,
-                                tint = com.example.ui.theme.ScanOrange,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(com.example.ui.theme.SurfaceCream)
+                                    .clickable { viewModel.navigateTo(Screen.AllergenSettings) }
+                                    .padding(horizontal = 12.dp, vertical = 9.dp)
+                                    .testTag("profile_open_full_allergy_editor"),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Allergy & Sensitizer Settings",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = SmokyBlack
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ChevronRight,
+                                    contentDescription = null,
+                                    tint = com.example.ui.theme.ScanOrange,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            Surface(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .border(1.dp, CardBorder, RoundedCornerShape(10.dp))
+                                    .clickable { showAllergenBottomSheet = true }
+                                    .testTag("profile_quick_allergen_sheet_trigger"),
+                                color = BoneLight
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Tune,
+                                        contentDescription = null,
+                                        tint = OliveDrab,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Quick Sheet",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = SmokyBlack
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -709,7 +805,7 @@ fun ProfileScreen(viewModel: ScanViewModel) {
                         icon = Icons.Default.Shield,
                         title = "Allergens & Dietary Needs",
                         testTag = "menu_allergens",
-                        onClick = { viewModel.navigateTo(Screen.Preferences) }
+                        onClick = { viewModel.navigateTo(Screen.AllergenSettings) }
                     )
 
                     ProfileMenuRow(
@@ -888,6 +984,15 @@ fun ProfileScreen(viewModel: ScanViewModel) {
                     Text("Close")
                 }
             }
+        )
+    }
+
+    if (showAllergenBottomSheet) {
+        AllergenBottomSheet(
+            sheetState = rememberModalBottomSheetState(),
+            viewModel = viewModel,
+            onOpenFullSettings = { viewModel.navigateTo(Screen.AllergenSettings) },
+            onDismiss = { showAllergenBottomSheet = false }
         )
     }
 }

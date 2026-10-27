@@ -58,6 +58,13 @@ val OliveDrabMuted: Color
         else -> Color(0xFF6B685B)
     }
 
+val OliveDrabDark: Color
+    get() = when {
+        ScanSafeThemeController.isDark -> Color(0xFFC4BEAE)
+        ScanSafeThemeController.isOutdoorHighContrast -> Color(0xFF1A1A14)
+        else -> Color(0xFF3E3C34)
+    }
+
 val Bone: Color
     get() = when {
         ScanSafeThemeController.isDark -> Color(0xFF33362C)
