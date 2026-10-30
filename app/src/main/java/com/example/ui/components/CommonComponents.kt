@@ -340,71 +340,56 @@ fun FindingCard(
 @Composable
 fun IngredientChip(
     ingredient: ParsedIngredient,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    categorizedEntry: CategorizedIngredientEntry? = null,
+    onBadgeClick: ((IngredientSafetyBadgeSpec) -> Unit)? = null
 ) {
-    val isMatched = ingredient.matchStatus == MatchStatus.MATCHED
-    val allergenName = ingredient.matchedAllergenName
-    val isHighRiskAllergen = ingredient.allergenSeverity == Severity.CRITICAL
-    val (bgColor, borderColor, textColor) = when {
-        allergenName != null && isHighRiskAllergen -> Triple(SemanticCriticalBg, SemanticCritical, SmokyBlack)
-        allergenName != null -> Triple(SemanticCautionBg, SemanticCaution, SmokyBlack)
-        isMatched -> Triple(CardSurface, CardBorder, SmokyBlack)
-        else -> Triple(SemanticUnknownBg, Bone, OliveDrab)
+    val badgeSpec = androidx.compose.runtime.remember(ingredient, categorizedEntry) {
+        ingredient.toSafetyBadgeSpec(categorizedEntry)
     }
-    val dotColor = when {
-        allergenName != null && isHighRiskAllergen -> SemanticCritical
-        allergenName != null -> SemanticCaution
-        isMatched -> SemanticSuccess
-        else -> SemanticCaution
+    val sev = badgeSpec.severity
+    val hasAllergen = ingredient.matchedAllergenName != null || categorizedEntry?.matchedAllergenName != null
+    val borderColor = when (sev) {
+        TrafficLightBadgeSeverity.RED_HIGH_HAZARD -> SemanticCritical
+        TrafficLightBadgeSeverity.YELLOW_CAUTION, TrafficLightBadgeSeverity.YELLOW_UNVERIFIED -> SemanticCaution
+        TrafficLightBadgeSeverity.GREEN_SAFE -> CardBorder
+    }
+    val bgColor = when (sev) {
+        TrafficLightBadgeSeverity.RED_HIGH_HAZARD -> SemanticCriticalBg.copy(alpha = 0.55f)
+        TrafficLightBadgeSeverity.YELLOW_CAUTION, TrafficLightBadgeSeverity.YELLOW_UNVERIFIED -> SemanticCautionBg.copy(alpha = 0.55f)
+        TrafficLightBadgeSeverity.GREEN_SAFE -> CardSurface
     }
 
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .border(if (allergenName != null) 1.5.dp else 1.dp, borderColor, RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(10.dp))
+            .border(
+                if (hasAllergen || sev != TrafficLightBadgeSeverity.GREEN_SAFE) 1.5.dp else 1.dp,
+                borderColor,
+                RoundedCornerShape(10.dp)
+            )
             .background(bgColor)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = 10.dp, vertical = 7.dp)
             .testTag("ingredient_chip_${ingredient.rawText}")
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(dotColor)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = ingredient.canonicalIngredient?.canonicalName ?: ingredient.rawText,
                 style = MaterialTheme.typography.bodySmall,
-                fontWeight = if (allergenName != null) FontWeight.Bold else if (isMatched) FontWeight.Medium else FontWeight.Normal,
-                color = textColor
+                fontWeight = if (hasAllergen || sev == TrafficLightBadgeSeverity.RED_HIGH_HAZARD) FontWeight.Bold else FontWeight.Medium,
+                color = SmokyBlack
             )
-            if (allergenName != null) {
-                Spacer(modifier = Modifier.width(6.dp))
-                Surface(
-                    color = dotColor,
-                    shape = RoundedCornerShape(4.dp)
-                ) {
-                    Text(
-                        text = "ALLERGEN",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 9.sp,
-                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                    )
+            Spacer(modifier = Modifier.width(6.dp))
+            IngredientSafetyBadge(
+                spec = badgeSpec,
+                compact = true,
+                onClick = if (onBadgeClick != null) {
+                    { onBadgeClick(badgeSpec) }
+                } else {
+                    onClick
                 }
-            } else if (!isMatched) {
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "(Unmatched)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = OliveDrabMuted,
-                    fontSize = 10.sp
-                )
-            }
+            )
         }
     }
 }

@@ -28,9 +28,12 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -71,8 +74,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.api.ScannerMode
 import com.example.data.catalog.SampleLabel
 import com.example.data.local.ScanEntity
+import com.example.data.sync.CloudSyncStatus
 import com.example.ui.ScanViewModel
 import com.example.ui.Screen
 import com.example.ui.theme.BoneLight
@@ -85,11 +90,17 @@ import com.example.ui.theme.OnScanOrange
 import com.example.ui.theme.ScanOrange
 import com.example.ui.theme.SemanticCaution
 import com.example.ui.theme.SemanticCautionBg
+import com.example.ui.theme.SemanticCritical
+import com.example.ui.theme.SemanticCriticalBg
 import com.example.ui.theme.SemanticSuccess
 import com.example.ui.theme.SemanticSuccessBg
 import com.example.ui.theme.SmokyBlack
 import com.example.ui.theme.SurfaceCream
 import com.example.ui.theme.ThemeMode
+import com.example.ui.util.AllergyImpactSummary
+import com.example.ui.util.HistoryAndImpactAnalytics
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -111,6 +122,20 @@ import java.util.Locale
 @Composable
 fun HomeScreen(viewModel: ScanViewModel) {
     val uiState by viewModel.uiState.collectAsState()
+    val allScans by viewModel.allScans.collectAsState()
+    val preferences by viewModel.preferences.collectAsState()
+    val customAllergens by viewModel.customAllergens.collectAsState()
+    val activeAllergenProfile by viewModel.activeAllergenProfile.collectAsState()
+
+    val allergyImpact = remember(allScans, preferences, customAllergens, activeAllergenProfile) {
+        HistoryAndImpactAnalytics.calculateAllergyImpact(
+            allScans = allScans,
+            preferences = preferences,
+            customAllergens = customAllergens,
+            activeProfile = activeAllergenProfile
+        )
+    }
+
     var showSafetyTipsDialog by remember { mutableStateOf(false) }
     var showThemeSelectorDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -240,9 +265,9 @@ fun HomeScreen(viewModel: ScanViewModel) {
                 Surface(
                     modifier = Modifier
                         .weight(1f)
-                        .height(198.dp)
+                        .height(212.dp)
                         .clip(RoundedCornerShape(22.dp))
-                        .clickable { viewModel.navigateTo(Screen.Scanner) }
+                        .clickable { viewModel.openScannerInMode(ScannerMode.INGREDIENT_OCR) }
                         .testTag("scan_hero_card"),
                     color = ScanOrange,
                     shape = RoundedCornerShape(22.dp)
@@ -250,58 +275,21 @@ fun HomeScreen(viewModel: ScanViewModel) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(18.dp),
+                            .padding(16.dp),
                         verticalArrangement = Arrangement.SpaceBetween,
                         horizontalAlignment = Alignment.Start
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.PhotoCamera,
-                            contentDescription = null,
-                            tint = OnScanOrange,
-                            modifier = Modifier.size(28.dp)
-                        )
-
-                        Column {
-                            Text(
-                                text = com.example.ui.util.AppLocalization.scanProductTitle(uiState.selectedLanguage),
-                                style = MaterialTheme.typography.titleLarge.copy(
-                                    fontFamily = FontFamily.Serif,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 19.sp
-                                ),
-                                color = OnScanOrange
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = com.example.ui.util.AppLocalization.scanProductSubtitle(uiState.selectedLanguage),
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontSize = 12.sp,
-                                    lineHeight = 15.5.sp
-                                ),
-                                color = OnScanOrange.copy(alpha = 0.9f),
-                                modifier = Modifier.testTag("home_scan_instruction_text")
-                            )
-                        }
-
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                    contentDescription = "Scan",
-                                    tint = ScanOrange,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.PhotoCamera,
+                                contentDescription = null,
+                                tint = OnScanOrange,
+                                modifier = Modifier.size(26.dp)
+                            )
 
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
@@ -316,8 +304,79 @@ fun HomeScreen(viewModel: ScanViewModel) {
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = OnScanOrange,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
                                 )
+                            }
+                        }
+
+                        Column {
+                            Text(
+                                text = com.example.ui.util.AppLocalization.scanProductTitle(uiState.selectedLanguage),
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontFamily = FontFamily.Serif,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 18.5.sp
+                                ),
+                                color = OnScanOrange
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = com.example.ui.util.AppLocalization.scanProductSubtitle(uiState.selectedLanguage),
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 14.5.sp
+                                ),
+                                color = OnScanOrange.copy(alpha = 0.9f),
+                                modifier = Modifier.testTag("home_scan_instruction_text")
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = "Scan Ingredients",
+                                    tint = ScanOrange,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = SmokyBlack,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable { viewModel.openScannerInMode(ScannerMode.BARCODE_SCAN) }
+                                    .testTag("home_scan_barcode_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.QrCodeScanner,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "Scan Barcode",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
                             }
                         }
                     }
@@ -327,7 +386,7 @@ fun HomeScreen(viewModel: ScanViewModel) {
                 Surface(
                     modifier = Modifier
                         .weight(1f)
-                        .height(198.dp)
+                        .height(212.dp)
                         .clip(RoundedCornerShape(22.dp))
                         .border(1.dp, CardBorder.copy(alpha = 0.6f), RoundedCornerShape(22.dp))
                         .clickable { viewModel.navigateTo(Screen.Glossary) }
@@ -428,6 +487,89 @@ fun HomeScreen(viewModel: ScanViewModel) {
                 )
             }
 
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Cloud Sync Status Pill (Room <-> Cloud bi-directional sync status)
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, CardBorder.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                    .clickable {
+                        if (uiState.isAuthenticated) {
+                            viewModel.syncCloudDataNow()
+                        } else {
+                            viewModel.navigateTo(Screen.Auth)
+                        }
+                    }
+                    .testTag("cloud_sync_status_badge"),
+                color = CardSurface,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = if (uiState.cloudSyncState.status == CloudSyncStatus.SYNCED) {
+                                Icons.Default.CloudDone
+                            } else {
+                                Icons.Default.CloudSync
+                            },
+                            contentDescription = null,
+                            tint = if (uiState.cloudSyncState.status == CloudSyncStatus.SYNCED) {
+                                SemanticSuccess
+                            } else {
+                                ScanOrange
+                            },
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = if (uiState.isAuthenticated) {
+                                uiState.cloudSyncState.statusMessage
+                            } else {
+                                "Local Room DB • Sign in to sync history & allergens across devices"
+                            },
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = SmokyBlack,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = SurfaceCream,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                if (uiState.isAuthenticated) {
+                                    viewModel.syncCloudDataNow()
+                                } else {
+                                    viewModel.navigateTo(Screen.Auth)
+                                }
+                            }
+                            .testTag("cloud_sync_now_button")
+                    ) {
+                        Text(
+                            text = if (uiState.isAuthenticated) "Sync Now" else "Sign In",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = ScanOrange,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
         }
 
@@ -467,7 +609,21 @@ fun HomeScreen(viewModel: ScanViewModel) {
                 )
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 4b. Visual Allergy Impact Summary Dashboard (Based on saved allergen profile & last 5 scans)
+            AllergyImpactDashboardCard(
+                summary = allergyImpact,
+                onManageAllergens = { viewModel.navigateTo(Screen.AllergenSettings) },
+                onOpenScan = { scanId -> viewModel.openReport(scanId) },
+                onFilterHistoryByAllergen = { allergenName ->
+                    viewModel.resetHistoryFilters()
+                    viewModel.setHistorySearchQuery(allergenName)
+                    viewModel.navigateTo(Screen.History)
+                }
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
         // 5. Promotional Editorial Banner Card ("Small Habits / Safer Choices / Brighter Tomorrow.")
@@ -960,3 +1116,293 @@ fun RecentScanRow(
         }
     }
 }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun AllergyImpactDashboardCard(
+    summary: AllergyImpactSummary,
+    onManageAllergens: () -> Unit,
+    onOpenScan: (String) -> Unit,
+    onFilterHistoryByAllergen: (String) -> Unit
+) {
+    val (tierFg, tierBg, tierBadgeLabel) = when (summary.impactTier) {
+        "HIGH" -> Triple(SemanticCritical, SemanticCriticalBg, "High Impact")
+        "MODERATE" -> Triple(SemanticCaution, SemanticCautionBg, "Moderate Impact")
+        else -> Triple(SemanticSuccess, SemanticSuccessBg, "Low Impact")
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
+            .testTag("home_allergy_impact_dashboard"),
+        color = CardSurface,
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Top Row: Title + Active Profile Subtitle + Manage Rules Action
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Allergy Impact Score",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.5.sp
+                            ),
+                            color = SmokyBlack
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = tierBg
+                        ) {
+                            Text(
+                                text = tierBadgeLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = tierFg,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "${summary.activeProfileName} • ${summary.enabledRulesCount} active rules • Last ${summary.recentFiveScans.size.coerceAtMost(5)} scans",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = OliveDrab,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = SurfaceCream,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, CardBorder, RoundedCornerShape(12.dp))
+                        .clickable(onClick = onManageAllergens)
+                        .testTag("home_allergy_impact_manage_button")
+                ) {
+                    Text(
+                        text = "Allergen Profile",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SmokyBlack,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            // Middle Section: Circular Impact Gauge + 5-Scan Mini Chart
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Left: Circular Allergy Impact Score Gauge
+                Box(
+                    modifier = Modifier
+                        .size(92.dp)
+                        .testTag("home_allergy_impact_score_gauge"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val trackColor = BoneLight
+                    Canvas(modifier = Modifier.fillMaxSize().padding(6.dp)) {
+                        val strokeWidth = 8.5.dp.toPx()
+                        drawArc(
+                            color = trackColor,
+                            startAngle = 135f,
+                            sweepAngle = 270f,
+                            useCenter = false,
+                            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                        )
+                        val progressSweep = (summary.impactScore.coerceIn(4, 100) / 100f) * 270f
+                        drawArc(
+                            color = tierFg,
+                            startAngle = 135f,
+                            sweepAngle = progressSweep,
+                            useCenter = false,
+                            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "${summary.impactScore}",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 22.sp
+                            ),
+                            color = SmokyBlack
+                        )
+                        Text(
+                            text = "/100 IMPACT",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 8.5.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = OliveDrab
+                        )
+                    }
+                }
+
+                // Right: Headline + 5-Scan Mini Trend Bar Chart
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("home_allergy_impact_mini_chart"),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = summary.impactHeadline,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SmokyBlack
+                    )
+                    Text(
+                        text = summary.impactSubtitle,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 11.5.sp,
+                            lineHeight = 15.sp
+                        ),
+                        color = OliveDrab
+                    )
+
+                    if (summary.recentFiveScans.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(58.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(SurfaceCream)
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            summary.recentFiveScans.forEachIndexed { index, point ->
+                                val barColor = when (point.safetyTier.uppercase(Locale.US)) {
+                                    "HIGH_RISK" -> SemanticCritical
+                                    "WARNING", "CAUTION" -> SemanticCaution
+                                    else -> SemanticSuccess
+                                }
+                                val normalizedRatio = (point.safetyScore.coerceIn(18, 100) / 100f)
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { onOpenScan(point.scanId) }
+                                        .testTag("impact_scan_bar_$index"),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Bottom
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(14.dp)
+                                            .height((28.dp * normalizedRatio).coerceAtLeast(8.dp))
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(barColor)
+                                    )
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = point.shortLabel,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp),
+                                        color = SmokyBlack,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Bottom Section: Allergen Breakdown Chips from Recent 5 Scans
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("home_allergy_impact_breakdown"),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (summary.triggeredAllergens.isEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = SemanticSuccessBg,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "✓ No saved medical allergies or sensitivities triggered in last ${summary.recentFiveScans.size} scans",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SemanticSuccess,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "Triggered profile allergens in last ${summary.recentFiveScans.size} scans (tap to filter history):",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = OliveDrab,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 11.sp
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        summary.triggeredAllergens.take(5).forEach { stat ->
+                            val chipBg = if (stat.isHighRisk) SemanticCriticalBg else SemanticCautionBg
+                            val chipFg = if (stat.isHighRisk) SemanticCritical else SemanticCaution
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = chipBg,
+                                border = androidx.compose.foundation.BorderStroke(0.5.dp, chipFg.copy(alpha = 0.45f)),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { onFilterHistoryByAllergen(stat.allergenName) }
+                                    .testTag(
+                                        "triggered_allergen_chip_${
+                                            stat.allergenName.lowercase(Locale.US).replace(" ", "_")
+                                        }"
+                                    )
+                            ) {
+                                Text(
+                                    text = "${stat.allergenName} • ${stat.classificationLabel} (${stat.hitCount}/5)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = chipFg,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.5.sp,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

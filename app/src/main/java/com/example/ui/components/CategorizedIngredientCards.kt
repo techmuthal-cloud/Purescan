@@ -228,6 +228,7 @@ fun categorizeReportIngredients(
             breakdown?.riskLevel.equals("HIGH_RISK", ignoreCase = true) -> IngredientHazardCategory.HIGH_HAZARD
             matchingFindings.any { it.severity == Severity.CRITICAL } -> IngredientHazardCategory.HIGH_HAZARD
             allergenName != null -> IngredientHazardCategory.WARNING
+            isUnverifiedToken || matchCertainty == MatchCertainty.POSSIBLE_DERIVATIVE_MATCH -> IngredientHazardCategory.WARNING
             breakdown?.riskLevel.equals("CAUTION", ignoreCase = true) ||
                 breakdown?.riskLevel.equals("WARNING", ignoreCase = true) -> IngredientHazardCategory.WARNING
             matchingFindings.any { it.severity == Severity.CAUTION } -> IngredientHazardCategory.WARNING
@@ -1136,7 +1137,9 @@ private fun CategorizedIngredientMaterialCard(
     onClick: () -> Unit
 ) {
     var localExpanded by remember(showInlineToxicology) { mutableStateOf(showInlineToxicology) }
+    var showBadgeTooltip by remember { mutableStateOf(false) }
     val cat = entry.category
+    val badgeSpec = remember(entry) { entry.toSafetyBadgeSpec() }
 
     OutlinedCard(
         modifier = Modifier
@@ -1158,7 +1161,7 @@ private fun CategorizedIngredientMaterialCard(
         )
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            // Top Row: Color Indicator Dot + Ingredient Name + Status Badge
+            // Top Row: Traffic-Light Dot + Ingredient Name + Interactive Traffic-Light Safety Badge
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1172,7 +1175,7 @@ private fun CategorizedIngredientMaterialCard(
                         modifier = Modifier
                             .size(10.dp)
                             .clip(CircleShape)
-                            .background(if (entry.isUncertainOrUnverified && entry.matchedAllergenName == null) SemanticCaution else cat.indicatorColor)
+                            .background(badgeSpec.severity.activeColor)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -1187,49 +1190,23 @@ private fun CategorizedIngredientMaterialCard(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Color-Coded Category Pill ('Safe', 'Warning', 'High Hazard', or 'Uncertain')
-                val pillLabel = if (entry.matchCertainty == MatchCertainty.EVIDENCE_INSUFFICIENT) {
-                    "UNVERIFIED"
-                } else {
-                    cat.label.uppercase()
-                }
-                val pillColor = if (entry.matchCertainty == MatchCertainty.EVIDENCE_INSUFFICIENT) {
-                    SemanticCaution
-                } else {
-                    cat.indicatorColor
-                }
-                val pillBg = if (entry.matchCertainty == MatchCertainty.EVIDENCE_INSUFFICIENT) {
-                    SemanticCautionBg
-                } else {
-                    cat.containerBg
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = pillBg,
-                    border = BorderStroke(1.dp, pillColor.copy(alpha = 0.45f))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = if (entry.matchCertainty == MatchCertainty.EVIDENCE_INSUFFICIENT) Icons.Default.HelpOutline else cat.icon,
-                            contentDescription = null,
-                            tint = pillColor,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = pillLabel,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = pillColor,
-                            fontSize = 10.sp
-                        )
-                    }
-                }
+                IngredientSafetyBadge(
+                    spec = badgeSpec,
+                    compact = false,
+                    onClick = { showBadgeTooltip = !showBadgeTooltip }
+                )
             }
+
+            // Tap-to-View Hazard Summary Tooltip when user taps the Safety Badge
+            IngredientSafetyTooltipCard(
+                spec = badgeSpec,
+                visible = showBadgeTooltip,
+                onDismiss = { showBadgeTooltip = false },
+                onInspectFullDetails = {
+                    localExpanded = true
+                    onClick()
+                }
+            )
 
             Spacer(modifier = Modifier.height(8.dp))
 

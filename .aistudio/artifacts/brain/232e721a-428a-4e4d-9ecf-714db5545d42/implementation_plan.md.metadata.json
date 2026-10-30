@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for refactoring the PureScan Login/Authentication screen into a clean, clutter-free dedicated Sign In view with a Google Sign-In button and bottom Create Account path, and building the Product Scan Result UI component with analysis status, classified ingredient insights, evidence-backed matching rules, expandable citations, and an interactive Uncertainty Banner with inline OCR text correction.",
-  "updatedAt":  "2026-10-27T16:14:38.354180832Z",
+  "summary":  "Implementation plan for a color-coded traffic-light Safety Badge system (Green/Yellow/Red) next to individual ingredients across all product analysis report lists, including Yellow caution + Unverified tags for uncertain/unmatched ingredients and tap-to-view hazard summary tooltips.",
+  "updatedAt":  "2026-10-30T15:06:30.422136779Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

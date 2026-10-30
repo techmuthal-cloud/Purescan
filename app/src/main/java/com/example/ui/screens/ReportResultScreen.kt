@@ -86,6 +86,7 @@ import com.example.ui.Screen
 import com.example.ui.components.AllergenWarningBar
 import com.example.ui.components.FindingCard
 import com.example.ui.components.IngredientChip
+import com.example.ui.components.toSafetyBadgeSpec
 import com.example.ui.theme.Bone
 import com.example.ui.theme.BoneLight
 import com.example.ui.theme.CardBorder
@@ -285,6 +286,14 @@ fun ReportResultScreen(viewModel: ScanViewModel) {
     // Modal Sheet: In-depth Ingredient Detail
     if (inspectedIngredient != null) {
         val ingredient = inspectedIngredient!!
+        val categorizedMap = remember(report, gemini) {
+            com.example.ui.components.categorizeReportIngredients(report, gemini)
+                .associateBy { it.rawLabelText.trim().lowercase() }
+        }
+        val matchedCatEntry = categorizedMap[ingredient.rawText.trim().lowercase()]
+        val modalBadgeSpec = remember(ingredient, matchedCatEntry) {
+            ingredient.toSafetyBadgeSpec(matchedCatEntry)
+        }
         ModalBottomSheet(
             onDismissRequest = { inspectedIngredient = null },
             sheetState = rememberModalBottomSheetState(),
@@ -300,16 +309,16 @@ fun ReportResultScreen(viewModel: ScanViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = if (ingredient.canonicalIngredient != null) "Verified Catalogue Match" else "Unmatched Ingredient",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (ingredient.canonicalIngredient != null) SemanticSuccess else OliveDrab
+                    com.example.ui.components.IngredientSafetyBadge(
+                        spec = modalBadgeSpec,
+                        compact = false
                     )
                     IconButton(onClick = { inspectedIngredient = null }) {
                         Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
                     }
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
                     text = ingredient.canonicalIngredient?.canonicalName ?: ingredient.rawText,
@@ -323,6 +332,14 @@ fun ReportResultScreen(viewModel: ScanViewModel) {
                     text = "Raw Text on Package: \"${ingredient.rawText}\"",
                     style = MaterialTheme.typography.bodySmall,
                     color = OliveDrabMuted
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                com.example.ui.components.IngredientSafetyTooltipCard(
+                    spec = modalBadgeSpec,
+                    visible = true,
+                    onDismiss = { inspectedIngredient = null }
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
@@ -1286,6 +1303,30 @@ private fun ProductDetailsView(
                 // TAB 1: Ingredients with Regulatory Risk Filter Tabs & Per-Ingredient Breakdown
                 1 -> {
                     item {
+                        val categorizedEntries = remember(report, gemini) {
+                            com.example.ui.components.categorizeReportIngredients(report, gemini)
+                        }
+                        val categorizedByRaw = remember(categorizedEntries) {
+                            categorizedEntries.associateBy { it.rawLabelText.trim().lowercase() }
+                        }
+                        var activeChipTooltipSpec by remember {
+                            mutableStateOf<com.example.ui.components.IngredientSafetyBadgeSpec?>(null)
+                        }
+
+                        val filteredIngredients = remember(report.ingredients, categorizedByRaw, ingredientRiskFilter) {
+                            report.ingredients.filter { ing ->
+                                val catEntry = categorizedByRaw[ing.rawText.trim().lowercase()]
+                                val spec = ing.toSafetyBadgeSpec(catEntry)
+                                when (ingredientRiskFilter) {
+                                    "SAFE" -> spec.severity == com.example.ui.components.TrafficLightBadgeSeverity.GREEN_SAFE
+                                    "CAUTION" -> spec.severity == com.example.ui.components.TrafficLightBadgeSeverity.YELLOW_CAUTION ||
+                                        spec.severity == com.example.ui.components.TrafficLightBadgeSeverity.YELLOW_UNVERIFIED
+                                    "HIGH_RISK" -> spec.severity == com.example.ui.components.TrafficLightBadgeSeverity.RED_HIGH_HAZARD
+                                    else -> true
+                                }
+                            }
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1311,7 +1352,7 @@ private fun ProductDetailsView(
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Filter by regulatory risk tier or tap any ingredient chip to inspect its profile.",
+                            text = "Filter by traffic-light safety tier or tap any ingredient's Safety Badge for a quick hazard summary.",
                             style = MaterialTheme.typography.bodySmall,
                             color = OliveDrabMuted
                         )
@@ -1358,12 +1399,37 @@ private fun ProductDetailsView(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            report.ingredients.forEach { ing ->
+                            filteredIngredients.forEach { ing ->
+                                val catEntry = categorizedByRaw[ing.rawText.trim().lowercase()]
                                 IngredientChip(
                                     ingredient = ing,
-                                    onClick = { onInspectIngredient(ing) }
+                                    categorizedEntry = catEntry,
+                                    onClick = { onInspectIngredient(ing) },
+                                    onBadgeClick = { spec ->
+                                        activeChipTooltipSpec = if (activeChipTooltipSpec?.ingredientKey == spec.ingredientKey) {
+                                            null
+                                        } else {
+                                            spec
+                                        }
+                                    }
                                 )
                             }
+                        }
+
+                        activeChipTooltipSpec?.let { tooltipSpec ->
+                            com.example.ui.components.IngredientSafetyTooltipCard(
+                                spec = tooltipSpec,
+                                visible = true,
+                                onDismiss = { activeChipTooltipSpec = null },
+                                onInspectFullDetails = {
+                                    val target = report.ingredients.firstOrNull {
+                                        (it.canonicalIngredient?.canonicalName ?: it.rawText).equals(tooltipSpec.ingredientName, ignoreCase = true)
+                                    }
+                                    if (target != null) {
+                                        onInspectIngredient(target)
+                                    }
+                                }
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))

@@ -1,7 +1,11 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.content.Intent
+import android.speech.RecognizerIntent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,12 +30,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -65,7 +70,6 @@ import androidx.compose.ui.unit.sp
 import com.example.data.local.ScanEntity
 import com.example.ui.ScanViewModel
 import com.example.ui.Screen
-import com.example.ui.components.BotanicalTopAppBar
 import com.example.ui.components.EmptyBotanicalState
 import com.example.ui.theme.BoneLight
 import com.example.ui.theme.CardBorder
@@ -83,6 +87,8 @@ import com.example.ui.theme.SemanticSuccess
 import com.example.ui.theme.SemanticSuccessBg
 import com.example.ui.theme.SmokyBlack
 import com.example.ui.theme.SurfaceCream
+import com.example.ui.util.HistoryAndImpactAnalytics
+import com.example.ui.util.HistoryDateFilter
 import org.json.JSONArray
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -100,26 +106,37 @@ fun HistoryScreen(viewModel: ScanViewModel) {
     val allScans by viewModel.allScans.collectAsState()
 
     var showClearAllDialog by remember { mutableStateOf(false) }
+    var simulatedSpokenInput by remember { mutableStateOf("") }
 
-    val filteredScans = remember(allScans, uiState.historySearchQuery, uiState.activeFilter) {
-        allScans.filter { scan ->
-            val query = uiState.historySearchQuery.trim()
-            val matchesQuery = query.isBlank() ||
-                    scan.title.contains(query, ignoreCase = true) ||
-                    scan.brandName.contains(query, ignoreCase = true) ||
-                    scan.correctedText.contains(query, ignoreCase = true) ||
-                    scan.aiHeadline.contains(query, ignoreCase = true) ||
-                    scan.allergensDetectedJson.contains(query, ignoreCase = true)
-
-            val matchesFilter = when (uiState.activeFilter) {
-                "concerns" -> scan.safetyTier == "WARNING" || scan.safetyTier == "HIGH_RISK" || scan.summaryStatus == "CONCERNS_IDENTIFIED"
-                "clean" -> scan.safetyTier == "SAFE" || scan.summaryStatus == "NO_RELEVANT_CONCERN"
-                "unknowns" -> scan.summaryStatus == "COMPLETED_WITH_UNKNOWNS" || scan.unmatchedCount > 0
-                else -> true
+    val speechRecognizerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val topTranscript = matches?.firstOrNull()?.trim().orEmpty()
+            if (topTranscript.isNotBlank()) {
+                viewModel.applyVoiceSearchQuery(topTranscript)
             }
-            matchesQuery && matchesFilter
         }
     }
+
+    val filteredScans = remember(
+        allScans,
+        uiState.historySearchQuery,
+        uiState.activeFilter,
+        uiState.historyDateFilter
+    ) {
+        HistoryAndImpactAnalytics.filterHistoryScans(
+            scans = allScans,
+            searchQuery = uiState.historySearchQuery,
+            safetyFilter = uiState.activeFilter,
+            dateFilter = uiState.historyDateFilter
+        )
+    }
+
+    val hasActiveFilters = uiState.historySearchQuery.isNotBlank() ||
+        uiState.activeFilter != "all" ||
+        uiState.historyDateFilter != HistoryDateFilter.ALL
 
     Column(
         modifier = Modifier
@@ -215,18 +232,18 @@ fun HistoryScreen(viewModel: ScanViewModel) {
             }
         }
 
-        // Search Bar with Clear Icon
+        // Search Bar with Voice-to-Text Button and Clear Icon
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .padding(horizontal = 20.dp, vertical = 4.dp)
         ) {
             OutlinedTextField(
                 value = uiState.historySearchQuery,
                 onValueChange = { viewModel.setHistorySearchQuery(it) },
                 placeholder = {
                     Text(
-                        "Search by product, ingredient, or allergen...",
+                        "Search by product name, date, or ingredient...",
                         color = OliveDrabMuted,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -239,13 +256,66 @@ fun HistoryScreen(viewModel: ScanViewModel) {
                     )
                 },
                 trailingIcon = {
-                    if (uiState.historySearchQuery.isNotBlank()) {
-                        IconButton(onClick = { viewModel.setHistorySearchQuery("") }) {
-                            Icon(
-                                imageVector = Icons.Default.Clear,
-                                contentDescription = "Clear search",
-                                tint = OliveDrab
-                            )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        if (uiState.historySearchQuery.isNotBlank()) {
+                            IconButton(
+                                onClick = { viewModel.setHistorySearchQuery("") },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .testTag("history_search_clear_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Clear,
+                                    contentDescription = "Clear search",
+                                    tint = OliveDrab
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = {
+                                val speechIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                    putExtra(
+                                        RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                                        RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                                    )
+                                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                                    putExtra(
+                                        RecognizerIntent.EXTRA_PROMPT,
+                                        "Say a product name, ingredient, or allergen to search your scan history"
+                                    )
+                                }
+                                val canResolve = speechIntent.resolveActivity(context.packageManager) != null
+                                if (canResolve) {
+                                    runCatching {
+                                        speechRecognizerLauncher.launch(speechIntent)
+                                    }.onFailure {
+                                        viewModel.setShowVoiceSearchSheet(true)
+                                    }
+                                } else {
+                                    viewModel.setShowVoiceSearchSheet(true)
+                                }
+                            },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .testTag("history_voice_search_button")
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(ScanOrange.copy(alpha = 0.14f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = "Voice search history",
+                                    tint = ScanOrange,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 },
@@ -260,21 +330,70 @@ fun HistoryScreen(viewModel: ScanViewModel) {
                     focusedTextColor = SmokyBlack,
                     unfocusedTextColor = SmokyBlack
                 ),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
                 singleLine = true
             )
         }
 
-        // Filter Pills Row
+        // Date Range Filter Chips Row (All Dates, Today, Last 7 Days, Last 30 Days)
         LazyRow(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp),
+                .padding(top = 4.dp, bottom = 2.dp)
+                .testTag("history_date_filter_row"),
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(HistoryDateFilter.entries) { dateFilter ->
+                val isSelected = uiState.historyDateFilter == dateFilter
+                Surface(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(
+                            width = 1.dp,
+                            color = if (isSelected) SmokyBlack else CardBorder,
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                        .clickable { viewModel.setHistoryDateFilter(dateFilter) }
+                        .testTag("date_chip_${dateFilter.id}"),
+                    color = if (isSelected) SmokyBlack else SurfaceCream
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CalendarToday,
+                            contentDescription = null,
+                            tint = if (isSelected) FloralWhite else OliveDrab,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = dateFilter.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isSelected) FloralWhite else SmokyBlack,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        // Safety Rating Category Filter Pills Row
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                .testTag("history_safety_filter_row"),
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             val filters = listOf(
                 "all" to "All Scans (${allScans.size})",
+                "safe" to "Safe",
+                "caution" to "Caution",
+                "high_risk" to "High Risk",
                 "concerns" to "Concerns Found",
                 "clean" to "Safe & Clean",
                 "unknowns" to "With Unknowns"
@@ -297,6 +416,35 @@ fun HistoryScreen(viewModel: ScanViewModel) {
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                     )
                 }
+            }
+        }
+
+        // Active Filter Summary & Reset Bar
+        if (hasActiveFilters) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Showing ${filteredScans.size} of ${allScans.size} scans",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = OliveDrab,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "Reset Filters",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = ScanOrange,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { viewModel.resetHistoryFilters() }
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                        .testTag("history_reset_filters_button")
+                )
             }
         }
 
@@ -324,19 +472,18 @@ fun HistoryScreen(viewModel: ScanViewModel) {
                 icon = Icons.Default.History,
                 title = if (allScans.isEmpty()) "No Scans Yet" else "No matching scans",
                 message = if (uiState.historySearchQuery.isNotBlank()) {
-                    "No previous records match \"${uiState.historySearchQuery}\". Try searching for another ingredient."
+                    "No previous records match \"${uiState.historySearchQuery}\". Try another product name, date, or safety filter."
                 } else if (allScans.isEmpty()) {
                     "Scan your first product label to build your personal evidence-backed history log."
                 } else {
-                    "No records match the active filter criteria."
+                    "No records match the active date or safety rating filter criteria."
                 },
                 actionLabel = if (allScans.isEmpty()) "Scan a Product" else "Show All Scans",
                 onActionClick = {
                     if (allScans.isEmpty()) {
                         viewModel.navigateTo(Screen.Scanner)
                     } else {
-                        viewModel.setHistorySearchQuery("")
-                        viewModel.setActiveFilter("all")
+                        viewModel.resetHistoryFilters()
                     }
                 }
             )
@@ -358,6 +505,140 @@ fun HistoryScreen(viewModel: ScanViewModel) {
                 }
             }
         }
+    }
+
+    // Inline Voice-to-Text Listening Sheet Fallback
+    if (uiState.showVoiceSearchSheet) {
+        val voicePresets = listOf(
+            "Cerave",
+            "Fragrance",
+            "Almond",
+            "Retinol",
+            "Sunscreen",
+            "Paraben"
+        )
+        AlertDialog(
+            onDismissRequest = { viewModel.setShowVoiceSearchSheet(false) },
+            modifier = Modifier.testTag("history_voice_listening_sheet"),
+            containerColor = FloralWhite,
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(ScanOrange.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = null,
+                            tint = ScanOrange,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "Voice Search Assistant",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = SmokyBlack
+                        )
+                        Text(
+                            text = "Listening for product name, ingredient, or allergen",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = OliveDrab
+                        )
+                    }
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = simulatedSpokenInput,
+                        onValueChange = { simulatedSpokenInput = it },
+                        placeholder = {
+                            Text(
+                                "e.g., \"Search for Cerave\" or \"Fragrance\"",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = OliveDrabMuted
+                            )
+                        },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("voice_search_transcript_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = ScanOrange,
+                            unfocusedBorderColor = CardBorder,
+                            focusedContainerColor = CardSurface,
+                            unfocusedContainerColor = CardSurface
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    Text(
+                        text = "Quick spoken commands:",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = OliveDrab
+                    )
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        voicePresets.forEach { preset ->
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = SurfaceCream,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable {
+                                        simulatedSpokenInput = preset
+                                        viewModel.applyVoiceSearchQuery(preset)
+                                    }
+                                    .testTag("voice_preset_${preset.lowercase(Locale.US)}")
+                            ) {
+                                Text(
+                                    text = "“$preset”",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = SmokyBlack,
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.applyVoiceSearchQuery(simulatedSpokenInput)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ScanOrange,
+                        contentColor = OnScanOrange
+                    ),
+                    modifier = Modifier.testTag("voice_search_apply_button")
+                ) {
+                    Text("Apply Voice Search", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { viewModel.setShowVoiceSearchSheet(false) },
+                    modifier = Modifier.testTag("voice_search_cancel_button")
+                ) {
+                    Text("Cancel", color = SmokyBlack)
+                }
+            }
+        )
     }
 
     // Confirmation dialog for single scan deletion

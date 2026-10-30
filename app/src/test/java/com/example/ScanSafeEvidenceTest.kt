@@ -7,6 +7,7 @@ import com.example.data.model.FindingType
 import com.example.data.model.MatchStatus
 import com.example.data.model.Severity
 import com.example.data.model.SummaryStatus
+import com.example.ui.components.toSafetyBadgeSpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -491,7 +492,450 @@ class ScanSafeEvidenceTest {
         assertTrue(mysteryEntry.isUncertainOrUnverified)
         assertEquals("Unverified Label Token", mysteryEntry.ruleClassificationLabel)
     }
+
+    @Test
+    fun cloudSyncService_mergesLocalAndRemoteScansAndAllergenRulesBiDirectionally() {
+        com.example.data.sync.CloudSyncService.clearInMemoryAndDiskForTest()
+        val email = "priya.sync@scansafe.ai"
+
+        // Device A uploads 1 scan and 1 custom allergen rule
+        val deviceAScan = com.example.data.sync.CloudScanBundle(
+            scan = com.example.data.local.ScanEntity(
+                id = "scan-device-a-1",
+                title = "Device A Hydrating Cleanser",
+                category = "Skin Care",
+                regionCode = "US",
+                status = "completed",
+                summaryStatus = "NO_RELEVANT_CONCERN",
+                correctedText = "Aqua, Glycerin, Ceramide NP",
+                safetyScore = 92,
+                safetyTier = "SAFE"
+            )
+        )
+        val deviceACustomAllergen = com.example.data.local.CustomAllergenEntity(
+            id = "custom-a-1",
+            name = "Methylisothiazolinone",
+            isEnabled = true,
+            severityLevel = "HIGH_RISK",
+            ruleClassification = "MEDICAL_ALLERGY",
+            notes = "Patch test confirmed"
+        )
+
+        val (_, summaryA) = com.example.data.sync.CloudSyncService.mergeLocalAndRemote(
+            userEmail = email,
+            localScans = listOf(deviceAScan),
+            localProfiles = emptyList(),
+            localPreferences = emptyList(),
+            localCustomAllergens = listOf(deviceACustomAllergen)
+        )
+        assertEquals(1, summaryA.totalScansSynced)
+        assertEquals(1, summaryA.uploadedScansCount)
+        assertEquals(1, summaryA.totalRulesSynced)
+
+        // Device B has a different offline scan and signs in with the same email
+        val deviceBScan = com.example.data.sync.CloudScanBundle(
+            scan = com.example.data.local.ScanEntity(
+                id = "scan-device-b-2",
+                title = "Device B Almond Night Oil",
+                category = "Skin Care",
+                regionCode = "EU",
+                status = "completed",
+                summaryStatus = "CONCERNS_IDENTIFIED",
+                correctedText = "Aqua, Prunus Amygdalus Dulcis Oil, Parfum",
+                safetyScore = 34,
+                safetyTier = "HIGH_RISK"
+            )
+        )
+        val deviceBCustomAllergen = com.example.data.local.CustomAllergenEntity(
+            id = "custom-b-2",
+            name = "Linalool",
+            isEnabled = true,
+            severityLevel = "WARNING",
+            ruleClassification = "PERSONAL_SENSITIVITY",
+            notes = "Fragrance terpene irritation"
+        )
+
+        val (mergedSnapshotB, summaryB) = com.example.data.sync.CloudSyncService.mergeLocalAndRemote(
+            userEmail = email,
+            localScans = listOf(deviceBScan),
+            localProfiles = emptyList(),
+            localPreferences = emptyList(),
+            localCustomAllergens = listOf(deviceBCustomAllergen)
+        )
+
+        // Both Device A and Device B scans and allergen rules must be present after bi-directional sync
+        assertEquals(2, summaryB.totalScansSynced)
+        assertEquals(1, summaryB.downloadedScansCount)
+        assertEquals(1, summaryB.uploadedScansCount)
+        assertEquals(2, mergedSnapshotB.scanBundles.size)
+        assertEquals(2, mergedSnapshotB.customAllergens.size)
+        assertTrue(mergedSnapshotB.scanBundles.any { it.scan.id == "scan-device-a-1" })
+        assertTrue(mergedSnapshotB.scanBundles.any { it.scan.id == "scan-device-b-2" })
+    }
+
+    @Test
+    fun barcodeLookupService_resolvesVerifiedBarcodesAndHandlesUnrecognizedFallback() = kotlinx.coroutines.runBlocking {
+        // 1. Lookup verified CeraVe barcode (3337875597395)
+        val foundResult = com.example.data.api.BarcodeLookupService.lookupBarcode(
+            rawBarcode = "3337875597395",
+            allowNetworkQuery = false
+        )
+        assertTrue(foundResult is com.example.data.api.BarcodeLookupResult.Found)
+        val foundProduct = (foundResult as com.example.data.api.BarcodeLookupResult.Found).product
+        assertEquals("CeraVe Moisturizing Cream", foundProduct.productTitle)
+        assertEquals("CeraVe", foundProduct.brandName)
+        assertTrue(foundProduct.ingredientsText.contains("Ceramide NP", ignoreCase = true))
+
+        // 2. Lookup verified high-allergen elixir barcode (4005808811571) and evaluate against nut/paraben rules
+        val elixirLookup = com.example.data.api.BarcodeLookupService.lookupBarcode(
+            rawBarcode = "4005808811571",
+            allowNetworkQuery = false
+        )
+        assertTrue(elixirLookup is com.example.data.api.BarcodeLookupResult.Found)
+        val elixirProduct = (elixirLookup as com.example.data.api.BarcodeLookupResult.Found).product
+        val prefs = listOf(
+            com.example.data.local.PreferenceSettingEntity(
+                key = "pref_tree_nuts",
+                label = "Tree Nuts & Peanuts",
+                description = "Flag almond oil",
+                category = "allergen",
+                isEnabled = true,
+                ruleClassification = "MEDICAL_ALLERGY"
+            )
+        )
+        val report = EvidenceEngine.analyzeIngredients(
+            productTitle = elixirProduct.productTitle,
+            category = elixirProduct.category,
+            region = "US",
+            rawOcrText = elixirProduct.ingredientsText,
+            correctedText = elixirProduct.ingredientsText,
+            activePreferences = prefs,
+            customAllergens = emptyList()
+        )
+        assertTrue(report.preferenceNotes.isNotEmpty())
+
+        // 3. Unrecognized barcode returns NotFound with fallback guidance
+        val missingResult = com.example.data.api.BarcodeLookupService.lookupBarcode(
+            rawBarcode = "9999999999999",
+            allowNetworkQuery = false
+        )
+        assertTrue(missingResult is com.example.data.api.BarcodeLookupResult.NotFound)
+        val notFound = missingResult as com.example.data.api.BarcodeLookupResult.NotFound
+        assertEquals("9999999999999", notFound.barcode)
+        assertTrue(notFound.reason.contains("not found", ignoreCase = true))
+    }
+
+    @Test
+    fun historyFilterEngine_filtersByNameDateRangeAndSafetyRatingCategories() {
+        val nowMs = 1_760_000_000_000L
+        val oneHourAgo = nowMs - (1L * 60L * 60L * 1000L)
+        val threeDaysAgo = nowMs - (3L * 24L * 60L * 60L * 1000L)
+        val twentyDaysAgo = nowMs - (20L * 24L * 60L * 60L * 1000L)
+        val sixtyDaysAgo = nowMs - (60L * 24L * 60L * 60L * 1000L)
+
+        val scans = listOf(
+            com.example.data.local.ScanEntity(
+                id = "scan-1",
+                title = "CeraVe Hydrating Cleanser",
+                brandName = "CeraVe",
+                category = "skincare",
+                regionCode = "US",
+                correctedText = "Aqua, Glycerin, Ceramide NP",
+                safetyScore = 94,
+                safetyTier = "SAFE",
+                summaryStatus = "NO_RELEVANT_CONCERN",
+                createdAt = oneHourAgo
+            ),
+            com.example.data.local.ScanEntity(
+                id = "scan-2",
+                title = "Botanical Citrus Mist",
+                brandName = "AromaGlow",
+                category = "skincare",
+                regionCode = "EU",
+                correctedText = "Aqua, Limonene, Linalool, Parfum",
+                safetyScore = 58,
+                safetyTier = "WARNING",
+                summaryStatus = "CONCERNS_IDENTIFIED",
+                createdAt = threeDaysAgo
+            ),
+            com.example.data.local.ScanEntity(
+                id = "scan-3",
+                title = "Intense Almond Night Elixir",
+                brandName = "LuxeDerm",
+                category = "skincare",
+                regionCode = "US",
+                correctedText = "Prunus Amygdalus Dulcis Oil, Methylparaben",
+                safetyScore = 24,
+                safetyTier = "HIGH_RISK",
+                summaryStatus = "CONCERNS_IDENTIFIED",
+                createdAt = twentyDaysAgo
+            ),
+            com.example.data.local.ScanEntity(
+                id = "scan-4",
+                title = "Vintage Herbal Balm",
+                brandName = "OldApothecary",
+                category = "cosmetics",
+                regionCode = "US",
+                correctedText = "UnknownBotanicalExtract99",
+                unmatchedCount = 1,
+                safetyScore = 50,
+                safetyTier = "UNKNOWN",
+                summaryStatus = "COMPLETED_WITH_UNKNOWNS",
+                createdAt = sixtyDaysAgo
+            )
+        )
+
+        // 1. Voice-to-text query normalization + search by product name
+        val voiceFiltered = com.example.ui.util.HistoryAndImpactAnalytics.filterHistoryScans(
+            scans = scans,
+            searchQuery = "Search for CeraVe",
+            safetyFilter = "all",
+            dateFilter = com.example.ui.util.HistoryDateFilter.ALL,
+            nowEpochMs = nowMs
+        )
+        assertEquals(1, voiceFiltered.size)
+        assertEquals("scan-1", voiceFiltered.first().id)
+
+        // 2. Filter by Date Range: TODAY, LAST_7_DAYS, LAST_30_DAYS
+        val todayScans = com.example.ui.util.HistoryAndImpactAnalytics.filterHistoryScans(
+            scans = scans,
+            searchQuery = "",
+            safetyFilter = "all",
+            dateFilter = com.example.ui.util.HistoryDateFilter.TODAY,
+            nowEpochMs = nowMs
+        )
+        assertEquals(1, todayScans.size)
+        assertEquals("scan-1", todayScans.first().id)
+
+        val weekScans = com.example.ui.util.HistoryAndImpactAnalytics.filterHistoryScans(
+            scans = scans,
+            searchQuery = "",
+            safetyFilter = "all",
+            dateFilter = com.example.ui.util.HistoryDateFilter.LAST_7_DAYS,
+            nowEpochMs = nowMs
+        )
+        assertEquals(2, weekScans.size)
+
+        val monthScans = com.example.ui.util.HistoryAndImpactAnalytics.filterHistoryScans(
+            scans = scans,
+            searchQuery = "",
+            safetyFilter = "all",
+            dateFilter = com.example.ui.util.HistoryDateFilter.LAST_30_DAYS,
+            nowEpochMs = nowMs
+        )
+        assertEquals(3, monthScans.size)
+
+        // 3. Filter by Safety Rating Categories: safe, caution, high_risk, unknowns
+        val safeOnly = com.example.ui.util.HistoryAndImpactAnalytics.filterHistoryScans(
+            scans = scans,
+            searchQuery = "",
+            safetyFilter = "safe",
+            dateFilter = com.example.ui.util.HistoryDateFilter.ALL,
+            nowEpochMs = nowMs
+        )
+        assertEquals(1, safeOnly.size)
+        assertEquals("scan-1", safeOnly.first().id)
+
+        val cautionOnly = com.example.ui.util.HistoryAndImpactAnalytics.filterHistoryScans(
+            scans = scans,
+            searchQuery = "",
+            safetyFilter = "caution",
+            dateFilter = com.example.ui.util.HistoryDateFilter.ALL,
+            nowEpochMs = nowMs
+        )
+        assertEquals(1, cautionOnly.size)
+        assertEquals("scan-2", cautionOnly.first().id)
+
+        val highRiskOnly = com.example.ui.util.HistoryAndImpactAnalytics.filterHistoryScans(
+            scans = scans,
+            searchQuery = "",
+            safetyFilter = "high_risk",
+            dateFilter = com.example.ui.util.HistoryDateFilter.ALL,
+            nowEpochMs = nowMs
+        )
+        assertEquals(1, highRiskOnly.size)
+        assertEquals("scan-3", highRiskOnly.first().id)
+    }
+
+    @Test
+    fun allergyImpactCalculator_computesScoreAndTriggeredAllergensFromProfileAndLastFiveScans() {
+        val preferences = listOf(
+            PreferenceSettingEntity(
+                key = "pref_fragrance_free",
+                label = "Fragrance & Parfum Free",
+                description = "Avoid synthetic fragrance",
+                category = "allergen",
+                isEnabled = true,
+                ruleClassification = "PERSONAL_SENSITIVITY"
+            ),
+            PreferenceSettingEntity(
+                key = "pref_tree_nuts",
+                label = "Tree Nuts & Peanuts",
+                description = "Avoid almond and nut oils",
+                category = "allergen",
+                isEnabled = true,
+                ruleClassification = "MEDICAL_ALLERGY"
+            )
+        )
+        val customAllergens = listOf(
+            com.example.data.local.CustomAllergenEntity(
+                id = "cust-1",
+                name = "Methylparaben",
+                isEnabled = true,
+                severityLevel = "HIGH_RISK",
+                ruleClassification = "MEDICAL_ALLERGY"
+            )
+        )
+        val activeProfile = com.example.data.local.AllergenProfileEntity(
+            id = "prof-1",
+            profileName = "Sensitive & Nut-Free",
+            description = "3 active rules",
+            isActive = true
+        )
+
+        // Provide 6 scans to verify only the last 5 are evaluated
+        val scans = listOf(
+            com.example.data.local.ScanEntity(
+                id = "s1",
+                title = "Almond Night Cream",
+                category = "skincare",
+                regionCode = "US",
+                correctedText = "Aqua, Prunus Amygdalus Dulcis (Sweet Almond) Oil, Methylparaben",
+                safetyScore = 25,
+                safetyTier = "HIGH_RISK"
+            ),
+            com.example.data.local.ScanEntity(
+                id = "s2",
+                title = "Floral Body Mist",
+                category = "skincare",
+                regionCode = "US",
+                correctedText = "Aqua, Parfum, Linalool",
+                safetyScore = 55,
+                safetyTier = "WARNING"
+            ),
+            com.example.data.local.ScanEntity(
+                id = "s3",
+                title = "Pure Squalane Oil",
+                category = "skincare",
+                regionCode = "US",
+                correctedText = "Squalane, Tocopherol",
+                safetyScore = 96,
+                safetyTier = "SAFE"
+            ),
+            com.example.data.local.ScanEntity(
+                id = "s4",
+                title = "Ceramide Barrier Gel",
+                category = "skincare",
+                regionCode = "US",
+                correctedText = "Aqua, Glycerin, Ceramide NP",
+                safetyScore = 92,
+                safetyTier = "SAFE"
+            ),
+            com.example.data.local.ScanEntity(
+                id = "s5",
+                title = "Botanical Rose Toner",
+                category = "skincare",
+                regionCode = "US",
+                correctedText = "Aqua, Fragrance, Citronellol",
+                safetyScore = 60,
+                safetyTier = "WARNING"
+            ),
+            com.example.data.local.ScanEntity(
+                id = "s6-older",
+                title = "Older Ignored Scan",
+                category = "skincare",
+                regionCode = "US",
+                correctedText = "Methylparaben",
+                safetyScore = 20,
+                safetyTier = "HIGH_RISK"
+            )
+        )
+
+        val summary = com.example.ui.util.HistoryAndImpactAnalytics.calculateAllergyImpact(
+            allScans = scans,
+            preferences = preferences,
+            customAllergens = customAllergens,
+            activeProfile = activeProfile
+        )
+
+        assertEquals("Sensitive & Nut-Free", summary.activeProfileName)
+        assertEquals(3, summary.enabledRulesCount)
+        assertEquals(5, summary.recentFiveScans.size)
+        assertEquals(3, summary.flaggedScansCount)
+        assertTrue(summary.impactScore > 0)
+        assertEquals("HIGH", summary.impactTier)
+        assertTrue(summary.triggeredAllergens.any { it.allergenName.contains("Methylparaben", ignoreCase = true) })
+        assertTrue(summary.triggeredAllergens.any { it.allergenName.contains("Tree Nuts", ignoreCase = true) })
+        assertTrue(summary.triggeredAllergens.any { it.allergenName.contains("Fragrance", ignoreCase = true) && it.hitCount == 2 })
+    }
+
+    @Test
+    fun trafficLightSafetyBadge_assignsGreenYellowUnverifiedAndRedCorrectly() {
+        val sampleText = "Water, Salicylic Acid, Methylparaben, UnrecognizedBotanicalExtract77"
+        val customAllergens = listOf(
+            com.example.data.local.CustomAllergenEntity(
+                name = "Methylparaben",
+                isEnabled = true,
+                severityLevel = "HIGH_RISK",
+                ruleClassification = "MEDICAL_ALLERGY",
+                notes = "Confirmed allergy"
+            )
+        )
+
+        val report = EvidenceEngine.analyzeIngredients(
+            productTitle = "Traffic Light Test Serum",
+            category = "Skin Care",
+            region = "EU",
+            rawOcrText = sampleText,
+            correctedText = sampleText,
+            activePreferences = emptyList(),
+            customAllergens = customAllergens
+        )
+        val gemini = com.example.data.api.GeminiService.generateFallbackInsight(
+            ingredientsText = sampleText,
+            category = "Skin Care",
+            userAllergens = listOf("Methylparaben"),
+            highRiskAllergens = listOf("Methylparaben")
+        )
+
+        val entries = com.example.ui.components.categorizeReportIngredients(report, gemini)
+        assertEquals(4, entries.size)
+
+        // 1. Water -> GREEN_SAFE (activeLampIndex = 2, pillLabel = "SAFE")
+        val waterEntry = entries.first { it.displayName.contains("Water", ignoreCase = true) }
+        val waterSpec = waterEntry.toSafetyBadgeSpec()
+        assertEquals(com.example.ui.components.TrafficLightBadgeSeverity.GREEN_SAFE, waterSpec.severity)
+        assertEquals(2, waterSpec.severity.activeLampIndex)
+        assertEquals("SAFE", waterSpec.severity.pillLabel)
+        assertEquals(false, waterSpec.isUnverified)
+
+        // 2. Salicylic Acid -> YELLOW_CAUTION (activeLampIndex = 1, pillLabel = "CAUTION")
+        val salicylicEntry = entries.first { it.displayName.contains("Salicylic", ignoreCase = true) }
+        val salicylicSpec = salicylicEntry.toSafetyBadgeSpec()
+        assertEquals(com.example.ui.components.TrafficLightBadgeSeverity.YELLOW_CAUTION, salicylicSpec.severity)
+        assertEquals(1, salicylicSpec.severity.activeLampIndex)
+        assertEquals("CAUTION", salicylicSpec.severity.pillLabel)
+
+        // 3. Methylparaben -> RED_HIGH_HAZARD (activeLampIndex = 0, pillLabel = "HIGH HAZARD")
+        val parabenEntry = entries.first { it.displayName.contains("Methylparaben", ignoreCase = true) }
+        val parabenSpec = parabenEntry.toSafetyBadgeSpec()
+        assertEquals(com.example.ui.components.TrafficLightBadgeSeverity.RED_HIGH_HAZARD, parabenSpec.severity)
+        assertEquals(0, parabenSpec.severity.activeLampIndex)
+        assertEquals("HIGH HAZARD", parabenSpec.severity.pillLabel)
+
+        // 4. UnrecognizedBotanicalExtract77 -> YELLOW_UNVERIFIED (Yellow caution tier + UNVERIFIED tag)
+        val unverifiedEntry = entries.first { it.rawLabelText == "UnrecognizedBotanicalExtract77" }
+        assertEquals(com.example.ui.components.IngredientHazardCategory.WARNING, unverifiedEntry.category)
+        val unverifiedSpec = unverifiedEntry.toSafetyBadgeSpec()
+        assertEquals(com.example.ui.components.TrafficLightBadgeSeverity.YELLOW_UNVERIFIED, unverifiedSpec.severity)
+        assertEquals(1, unverifiedSpec.severity.activeLampIndex)
+        assertTrue(unverifiedSpec.severity.pillLabel.contains("UNVERIFIED"))
+        assertTrue(unverifiedSpec.isUnverified)
+    }
 }
+
+
+
 
 
 

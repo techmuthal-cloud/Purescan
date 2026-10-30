@@ -52,8 +52,10 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,9 +63,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import com.example.data.api.BarcodeLookupService
+import com.example.data.api.ScannerMode
 import com.example.ui.components.AllergenBottomSheet
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -443,8 +449,67 @@ fun ScannerScreen(viewModel: ScanViewModel) {
                 }
             }
 
-            // Quick Allergy Filter Pill in Scanner
+            // Scanner Mode Switcher: Ingredient OCR vs Barcode Scan
             Spacer(modifier = Modifier.height(10.dp))
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = BrandSmokyBlack.copy(alpha = 0.88f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
+                modifier = Modifier.testTag("scanner_capture_type_bar")
+            ) {
+                Row(
+                    modifier = Modifier.padding(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val isOcrMode = uiState.scannerMode == ScannerMode.INGREDIENT_OCR
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (isOcrMode) BrandScanOrange else Color.Transparent,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable { viewModel.setScannerMode(ScannerMode.INGREDIENT_OCR) }
+                            .testTag("scanner_mode_toggle_ocr")
+                    ) {
+                        Text(
+                            text = "Ingredient OCR",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isOcrMode) BrandSmokyBlack else Color.White,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (!isOcrMode) BrandScanOrange else Color.Transparent,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable { viewModel.setScannerMode(ScannerMode.BARCODE_SCAN) }
+                            .testTag("scanner_mode_toggle_barcode")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = null,
+                                tint = if (!isOcrMode) BrandSmokyBlack else Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "Barcode Scan",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (!isOcrMode) BrandSmokyBlack else Color.White
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Quick Allergy Filter Pill in Scanner
+            Spacer(modifier = Modifier.height(8.dp))
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = BrandSmokyBlack.copy(alpha = 0.85f),
@@ -633,10 +698,13 @@ fun ScannerScreen(viewModel: ScanViewModel) {
                 border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
             ) {
                 Text(
-                    text = if (uiState.isBatchScanMode) {
-                        "Batch Mode: Capture multiple labels in sequence,\nthen tap Analyze Batch below"
-                    } else {
-                        "Align the ingredient list\nwithin the frame"
+                    text = when {
+                        uiState.scannerMode == ScannerMode.BARCODE_SCAN ->
+                            "Center EAN-13 / UPC-A barcode inside frame\nor enter product barcode below"
+                        uiState.isBatchScanMode ->
+                            "Batch Mode: Capture multiple labels in sequence,\nthen tap Analyze Batch below"
+                        else ->
+                            "Align the ingredient list\nwithin the frame"
                     },
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontSize = 14.sp,
@@ -647,6 +715,198 @@ fun ScannerScreen(viewModel: ScanViewModel) {
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 9.dp)
                 )
+            }
+
+            // Barcode Lookup & Unrecognized Fallback Panel when in BARCODE_SCAN mode
+            if (uiState.scannerMode == ScannerMode.BARCODE_SCAN) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = BrandSmokyBlack.copy(alpha = 0.94f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, BrandScanOrange.copy(alpha = 0.55f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("barcode_scanner_panel")
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = uiState.barcodeInputText,
+                                onValueChange = { viewModel.setBarcodeInputText(it) },
+                                placeholder = {
+                                    Text(
+                                        text = "EAN / UPC (e.g. 3337875597395)",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFFD8CFBC)
+                                    )
+                                },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("barcode_input_field"),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = BrandScanOrange,
+                                    unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+
+                            Button(
+                                onClick = { viewModel.analyzeBarcode(uiState.barcodeInputText) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = BrandScanOrange,
+                                    contentColor = BrandSmokyBlack
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .height(50.dp)
+                                    .testTag("barcode_lookup_submit_button")
+                            ) {
+                                Text(
+                                    text = "Lookup",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "Tap a verified product barcode (OpenBeautyFacts / OpenFoodFacts):",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFD8CFBC)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(BarcodeLookupService.verifiedCatalog, key = { it.barcode }) { item ->
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color(0xFF2B2C25),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        Color.White.copy(alpha = 0.18f)
+                                    ),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            viewModel.setBarcodeInputText(item.barcode)
+                                            viewModel.analyzeBarcode(item.barcode)
+                                        }
+                                        .testTag("barcode_preset_${item.barcode}")
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = item.productTitle,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            text = "EAN: ${item.barcode}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = BrandScanOrange,
+                                            fontSize = 10.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (uiState.unrecognizedBarcode != null) {
+                            val missingCode = uiState.unrecognizedBarcode!!
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF33241B),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, BrandScanOrange),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("barcode_not_found_banner")
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.WarningAmber,
+                                            contentDescription = null,
+                                            tint = BrandScanOrange,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Barcode #$missingCode Not Found",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = uiState.unrecognizedBarcodeReason
+                                            ?: "No ingredient list found in OpenBeautyFacts or OpenFoodFacts.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFFD8CFBC),
+                                        fontSize = 11.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = BrandScanOrange,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .clickable { viewModel.switchFromBarcodeFallbackToOcr(missingCode) }
+                                                .testTag("barcode_fallback_ocr_button")
+                                        ) {
+                                            Text(
+                                                text = "Scan Label OCR",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = BrandSmokyBlack,
+                                                textAlign = TextAlign.Center,
+                                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp)
+                                            )
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = Color(0xFF2B2C25),
+                                            border = androidx.compose.foundation.BorderStroke(
+                                                1.dp,
+                                                Color.White.copy(alpha = 0.25f)
+                                            ),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .clickable { viewModel.switchFromBarcodeFallbackToManual(missingCode) }
+                                                .testTag("barcode_fallback_manual_button")
+                                        ) {
+                                            Text(
+                                                text = "Type Ingredients",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                textAlign = TextAlign.Center,
+                                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1022,23 +1282,33 @@ fun ScannerScreen(viewModel: ScanViewModel) {
                         .border(3.5.dp, BrandScanOrange, CircleShape)
                         .clickable(enabled = !isCapturing) {
                             com.example.ui.util.HapticsManager.triggerCameraCapture(context, previewViewRef)
-                            viewModel.onCaptureStarted()
-                            captureRealFrameOrFallback(
-                                context = context,
-                                imageCapture = imageCaptureInstance,
-                                previewView = previewViewRef,
-                                seedIndex = uiState.batchQueue.size,
-                                onCapturingState = { isCapturing = it },
-                                onBitmapReady = { bitmap ->
-                                    if (reviewBeforeAnalyze) {
-                                        capturedReviewBitmap = bitmap
-                                    } else if (uiState.isBatchScanMode) {
-                                        viewModel.enqueueBatchBitmap(bitmap)
-                                    } else {
-                                        viewModel.onRealPhotoCapturedOrPicked(bitmap)
+                            if (uiState.scannerMode == ScannerMode.BARCODE_SCAN && uiState.barcodeInputText.isNotBlank()) {
+                                viewModel.analyzeBarcode(uiState.barcodeInputText)
+                            } else {
+                                viewModel.onCaptureStarted()
+                                captureRealFrameOrFallback(
+                                    context = context,
+                                    imageCapture = imageCaptureInstance,
+                                    previewView = previewViewRef,
+                                    seedIndex = uiState.batchQueue.size,
+                                    onCapturingState = { isCapturing = it },
+                                    onBitmapReady = { bitmap ->
+                                        if (uiState.scannerMode == ScannerMode.BARCODE_SCAN) {
+                                            val detectedBarcode = BarcodeLookupService.extractBarcodeFromCameraFrame(
+                                                bitmap = bitmap,
+                                                seedIndex = uiState.scanQuotaUsed
+                                            )
+                                            viewModel.analyzeBarcode(detectedBarcode)
+                                        } else if (reviewBeforeAnalyze) {
+                                            capturedReviewBitmap = bitmap
+                                        } else if (uiState.isBatchScanMode) {
+                                            viewModel.enqueueBatchBitmap(bitmap)
+                                        } else {
+                                            viewModel.onRealPhotoCapturedOrPicked(bitmap)
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                         .padding(6.dp)
                         .testTag("capture_shutter_button"),

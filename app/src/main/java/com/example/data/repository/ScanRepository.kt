@@ -777,6 +777,88 @@ class ScanRepository(private val db: AppDatabase) {
         )
     }
 
+    suspend fun syncWithCloud(userEmail: String): com.example.data.sync.CloudSyncSummary {
+        val localScans = scanDao.getAllScansList().filterNot { it.isSyntheticDemo }
+        val localBundles = localScans.map { scan ->
+            com.example.data.sync.CloudScanBundle(
+                scan = scan,
+                ingredients = scanDao.getIngredientsForScan(scan.id),
+                findings = scanDao.getFindingsForScan(scan.id)
+            )
+        }
+        val localProfiles = allergenProfileDao.getAllProfilesList()
+        val localPrefs = preferenceDao.getPreferencesList()
+        val localCustom = customAllergenDao.getAllCustomAllergensList()
+
+        val (mergedSnapshot, summary) = com.example.data.sync.CloudSyncService.mergeLocalAndRemote(
+            userEmail = userEmail,
+            localScans = localBundles,
+            localProfiles = localProfiles,
+            localPreferences = localPrefs,
+            localCustomAllergens = localCustom
+        )
+
+        // Upsert merged remote records back into local Room tables
+        mergedSnapshot.scanBundles.forEach { bundle ->
+            scanDao.insertScan(bundle.scan)
+            if (bundle.ingredients.isNotEmpty()) {
+                scanDao.insertIngredients(bundle.ingredients)
+            }
+            if (bundle.findings.isNotEmpty()) {
+                scanDao.insertFindings(bundle.findings)
+            }
+        }
+        if (mergedSnapshot.allergenProfiles.isNotEmpty()) {
+            allergenProfileDao.insertProfiles(mergedSnapshot.allergenProfiles)
+        }
+        if (mergedSnapshot.preferences.isNotEmpty()) {
+            preferenceDao.insertPreferences(mergedSnapshot.preferences)
+        }
+        if (mergedSnapshot.customAllergens.isNotEmpty()) {
+            customAllergenDao.insertCustomAllergens(mergedSnapshot.customAllergens)
+        }
+
+        return summary
+    }
+
+    suspend fun lookupAndAnalyzeBarcode(
+        rawBarcode: String,
+        region: String,
+        languageCode: String = "en",
+        allowNetworkQuery: Boolean = true
+    ): Pair<com.example.data.api.BarcodeLookupResult, ScanReport?> {
+        val lookupResult = com.example.data.api.BarcodeLookupService.lookupBarcode(
+            rawBarcode = rawBarcode,
+            allowNetworkQuery = allowNetworkQuery
+        )
+        return when (lookupResult) {
+            is com.example.data.api.BarcodeLookupResult.Found -> {
+                val product = lookupResult.product
+                val report = processAndSaveScan(
+                    productTitle = "${product.productTitle} (${product.brandName})",
+                    category = product.category,
+                    region = region,
+                    rawOcrText = product.ingredientsText,
+                    correctedText = product.ingredientsText,
+                    languageCode = languageCode
+                )
+                val enrichedInsight = report.geminiInsight?.copy(
+                    brandName = product.brandName
+                )
+                val finalReport = if (enrichedInsight != null) {
+                    persistReportToDb(report, enrichedInsight)
+                    report.copy(geminiInsight = enrichedInsight)
+                } else {
+                    report
+                }
+                lookupResult to finalReport
+            }
+            is com.example.data.api.BarcodeLookupResult.NotFound -> {
+                lookupResult to null
+            }
+        }
+    }
+
     suspend fun exportUserDataAsJson(): String {
         val scans = scanDao.getAllScansList()
         return buildString {
@@ -789,3 +871,4 @@ class ScanRepository(private val db: AppDatabase) {
         }
     }
 }
+

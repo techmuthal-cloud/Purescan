@@ -14,8 +14,14 @@ import com.example.data.model.BatchQueueItem
 import com.example.data.model.BatchScanSummary
 import com.example.data.model.ParsedIngredient
 import com.example.data.model.ReportFinding
+import com.example.data.api.BarcodeLookupResult
+import com.example.data.api.BarcodeLookupService
+import com.example.data.api.ScannerMode
 import com.example.data.model.ScanReport
 import com.example.data.repository.ScanRepository
+import com.example.data.sync.CloudSyncService
+import com.example.data.sync.CloudSyncStatus
+import com.example.data.sync.CloudSyncUiState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -26,6 +32,8 @@ import kotlinx.coroutines.launch
 import com.example.ui.theme.ThemeMode
 import com.example.ui.util.AppLanguage
 import com.example.ui.util.HapticsManager
+import com.example.ui.util.HistoryAndImpactAnalytics
+import com.example.ui.util.HistoryDateFilter
 import java.util.UUID
 
 sealed class Screen {
@@ -76,8 +84,11 @@ data class ScanUiState(
     val scanQuotaUsed: Int = 2,
     val scanQuotaTotal: Int = 5,
     val isPremium: Boolean = false,
-    val activeFilter: String = "all", // "all", "concerns", "clean", "unknowns"
+    val activeFilter: String = "all", // "all", "safe", "caution", "high_risk", "concerns", "clean", "unknowns"
+    val historyDateFilter: HistoryDateFilter = HistoryDateFilter.ALL,
     val historySearchQuery: String = "",
+    val showVoiceSearchSheet: Boolean = false,
+    val lastVoiceSearchTranscript: String = "",
     val deleteConfirmationScanId: String? = null,
     val notificationMessage: String? = null,
     val userName: String = "Priya Sharma",
@@ -101,7 +112,12 @@ data class ScanUiState(
     val activeScanJobId: String? = null,
     val selectedLanguage: AppLanguage = AppLanguage.ENGLISH,
     val showLanguageDialog: Boolean = false,
-    val showHowItWorksDialog: Boolean = false
+    val showHowItWorksDialog: Boolean = false,
+    val scannerMode: ScannerMode = ScannerMode.INGREDIENT_OCR,
+    val barcodeInputText: String = "",
+    val unrecognizedBarcode: String? = null,
+    val unrecognizedBarcodeReason: String? = null,
+    val cloudSyncState: CloudSyncUiState = CloudSyncUiState()
 )
 
 class ScanViewModel(application: Application) : AndroidViewModel(application) {
@@ -121,6 +137,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
     private val authPrefs = application.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE)
     private val repository = ScanRepository(AppDatabase.getDatabase(application))
+
+    init {
+        CloudSyncService.initializeVaultDirectory(application)
+    }
 
     private val _uiState = MutableStateFlow(createInitialAuthState())
     val uiState: StateFlow<ScanUiState> = _uiState.asStateFlow()
@@ -228,7 +248,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         userEmail = account.email,
                         currentScreen = Screen.Home
                     )
-                    showToast("Signed in as ${account.fullName}")
+                    performCloudSyncInternal(account.email, showToastOnFinish = false)
+                    showToast("Signed in as ${account.fullName} • Cloud sync complete")
                 },
                 onFailure = { err ->
                     HapticsManager.triggerErrorState(getApplication())
@@ -262,7 +283,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 userEmail = account.email,
                 currentScreen = Screen.Home
             )
-            showToast("Signed in with Google (${account.email})")
+            performCloudSyncInternal(account.email, showToastOnFinish = false)
+            showToast("Signed in with Google (${account.email}) • Cloud synced")
         }
     }
 
@@ -288,6 +310,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 userEmail = account.email,
                 currentScreen = Screen.Home
             )
+            performCloudSyncInternal(account.email, showToastOnFinish = false)
             showToast("Welcome back, ${account.fullName}!")
         }
     }
@@ -569,6 +592,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 activeScanJobId = null,
                 currentScreen = Screen.ReportResult
             )
+            if (_uiState.value.isAuthenticated) {
+                performCloudSyncInternal(_uiState.value.userEmail, showToastOnFinish = false)
+            }
         }
     }
 
@@ -647,6 +673,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 activeScanJobId = null,
                 currentScreen = Screen.ReportResult
             )
+            if (_uiState.value.isAuthenticated) {
+                performCloudSyncInternal(_uiState.value.userEmail, showToastOnFinish = false)
+            }
         }
     }
 
@@ -946,6 +975,38 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         setActiveFilter(filter)
     }
 
+    fun setHistoryDateFilter(dateFilter: HistoryDateFilter) {
+        HapticsManager.triggerSelectionTap(getApplication())
+        _uiState.value = _uiState.value.copy(historyDateFilter = dateFilter)
+    }
+
+    fun setShowVoiceSearchSheet(show: Boolean) {
+        _uiState.value = _uiState.value.copy(showVoiceSearchSheet = show)
+    }
+
+    fun applyVoiceSearchQuery(rawSpokenText: String) {
+        val normalized = HistoryAndImpactAnalytics.normalizeVoiceCommandToSearchTerm(rawSpokenText)
+        HapticsManager.triggerSelectionTap(getApplication())
+        _uiState.value = _uiState.value.copy(
+            historySearchQuery = normalized,
+            lastVoiceSearchTranscript = rawSpokenText.trim(),
+            showVoiceSearchSheet = false
+        )
+        if (normalized.isNotBlank()) {
+            showToast("Voice search: \"$normalized\"")
+        }
+    }
+
+    fun resetHistoryFilters() {
+        HapticsManager.triggerSelectionTap(getApplication())
+        _uiState.value = _uiState.value.copy(
+            historySearchQuery = "",
+            activeFilter = "all",
+            historyDateFilter = HistoryDateFilter.ALL,
+            lastVoiceSearchTranscript = ""
+        )
+    }
+
     fun setSelectedFinding(finding: ReportFinding?) {
         _uiState.value = _uiState.value.copy(selectedFinding = finding)
     }
@@ -1042,6 +1103,164 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             category = category,
             rawOcrText = "Aqua, Glycerin, $ingredientName",
             editableText = "Aqua, Glycerin, $ingredientName"
+        )
+        navigateTo(Screen.TextReview)
+    }
+
+    fun syncCloudDataNow() {
+        val email = _uiState.value.userEmail.trim()
+        if (email.isBlank()) {
+            showToast("Sign in to synchronize scans and allergen rules across devices")
+            return
+        }
+        viewModelScope.launch {
+            performCloudSyncInternal(email, showToastOnFinish = true)
+        }
+    }
+
+    private suspend fun performCloudSyncInternal(email: String, showToastOnFinish: Boolean) {
+        _uiState.value = _uiState.value.copy(
+            cloudSyncState = _uiState.value.cloudSyncState.copy(
+                status = CloudSyncStatus.SYNCING,
+                statusMessage = "Syncing scans & allergen rules..."
+            )
+        )
+        runCatching {
+            repository.syncWithCloud(email)
+        }.fold(
+            onSuccess = { summary ->
+                _uiState.value = _uiState.value.copy(
+                    cloudSyncState = CloudSyncUiState(
+                        status = CloudSyncStatus.SYNCED,
+                        lastSyncedAtEpochMs = summary.syncedAtEpochMs,
+                        syncedScansCount = summary.totalScansSynced,
+                        syncedRulesCount = summary.totalRulesSynced,
+                        downloadedScansCount = summary.downloadedScansCount,
+                        uploadedScansCount = summary.uploadedScansCount,
+                        statusMessage = "Synced ${summary.totalScansSynced} scans • ${summary.totalRulesSynced} rules"
+                    )
+                )
+                if (showToastOnFinish) {
+                    showToast("Cloud sync complete: ${summary.totalScansSynced} scans & ${summary.totalRulesSynced} allergen rules synced")
+                }
+            },
+            onFailure = { err ->
+                _uiState.value = _uiState.value.copy(
+                    cloudSyncState = _uiState.value.cloudSyncState.copy(
+                        status = CloudSyncStatus.ERROR,
+                        statusMessage = "Cloud sync paused (${err.message ?: "offline"})"
+                    )
+                )
+            }
+        )
+    }
+
+    fun openScannerInMode(mode: ScannerMode) {
+        HapticsManager.triggerSelectionTap(getApplication())
+        _uiState.value = _uiState.value.copy(
+            scannerMode = mode,
+            isBatchScanMode = false,
+            unrecognizedBarcode = null,
+            unrecognizedBarcodeReason = null
+        )
+        navigateTo(Screen.Scanner)
+    }
+
+    fun setScannerMode(mode: ScannerMode) {
+        HapticsManager.triggerSelectionTap(getApplication())
+        _uiState.value = _uiState.value.copy(
+            scannerMode = mode,
+            unrecognizedBarcode = null,
+            unrecognizedBarcodeReason = null
+        )
+    }
+
+    fun setBarcodeInputText(value: String) {
+        _uiState.value = _uiState.value.copy(
+            barcodeInputText = value,
+            unrecognizedBarcode = null,
+            unrecognizedBarcodeReason = null
+        )
+    }
+
+    fun clearUnrecognizedBarcode() {
+        _uiState.value = _uiState.value.copy(
+            unrecognizedBarcode = null,
+            unrecognizedBarcodeReason = null
+        )
+    }
+
+    fun analyzeBarcode(rawBarcode: String, allowNetworkQuery: Boolean = true) {
+        val trimmed = rawBarcode.trim()
+        if (trimmed.isBlank()) {
+            showToast("Enter or scan a product barcode first")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                captureStatus = ScanStatus.PROCESSING,
+                unrecognizedBarcode = null,
+                unrecognizedBarcodeReason = null
+            )
+            val (lookupResult, report) = repository.lookupAndAnalyzeBarcode(
+                rawBarcode = trimmed,
+                region = _uiState.value.region,
+                languageCode = _uiState.value.selectedLanguage.code,
+                allowNetworkQuery = allowNetworkQuery
+            )
+            when (lookupResult) {
+                is BarcodeLookupResult.Found -> {
+                    if (report != null) {
+                        HapticsManager.triggerAnalysisSuccess(getApplication())
+                        val newQuota = _uiState.value.scanQuotaUsed + 1
+                        _uiState.value = _uiState.value.copy(
+                            productTitle = report.productTitle,
+                            category = report.category,
+                            rawOcrText = report.rawOcrText,
+                            editableText = report.correctedText,
+                            currentReport = report,
+                            showFullProductDetails = false,
+                            scanQuotaUsed = newQuota,
+                            captureStatus = ScanStatus.COMPLETED,
+                            barcodeInputText = lookupResult.product.barcode,
+                            currentScreen = Screen.ReportResult
+                        )
+                        if (_uiState.value.isAuthenticated) {
+                            performCloudSyncInternal(_uiState.value.userEmail, showToastOnFinish = false)
+                        }
+                        showToast("Barcode ${lookupResult.product.barcode} matched: ${lookupResult.product.productTitle}")
+                    }
+                }
+                is BarcodeLookupResult.NotFound -> {
+                    HapticsManager.triggerErrorState(getApplication())
+                    _uiState.value = _uiState.value.copy(
+                        captureStatus = ScanStatus.INCONCLUSIVE,
+                        barcodeInputText = lookupResult.barcode,
+                        unrecognizedBarcode = lookupResult.barcode,
+                        unrecognizedBarcodeReason = lookupResult.reason
+                    )
+                }
+            }
+        }
+    }
+
+    fun switchFromBarcodeFallbackToOcr(barcode: String) {
+        _uiState.value = _uiState.value.copy(
+            scannerMode = ScannerMode.INGREDIENT_OCR,
+            productTitle = "Product #$barcode",
+            unrecognizedBarcode = null,
+            unrecognizedBarcodeReason = null
+        )
+        showToast("Switched to Ingredient OCR for Barcode #$barcode")
+    }
+
+    fun switchFromBarcodeFallbackToManual(barcode: String) {
+        _uiState.value = _uiState.value.copy(
+            productTitle = "Product #$barcode",
+            rawOcrText = "",
+            editableText = "",
+            unrecognizedBarcode = null,
+            unrecognizedBarcodeReason = null
         )
         navigateTo(Screen.TextReview)
     }
